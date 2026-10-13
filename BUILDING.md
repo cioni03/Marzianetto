@@ -131,7 +131,7 @@ Parte automaticamente su push a `main`/`master`, tag `v*` e pull request verso q
 | Windows | ZIP portabile con `.exe` x64 e documentazione |
 | Linux | archivio `.tar.gz` x64 con eseguibile e documentazione |
 
-Trovi i download nella pagina dell'esecuzione, sezione **Artifacts**. GitHub li conserva per 30 giorni (entro gli eventuali limiti del repository). Le build **non vengono aggiunte ai commit e non vengono pubblicate automaticamente come GitHub Release**. Il workflow richiede solo permesso di lettura al repository e non necessita di secret personali.
+Trovi i download nella pagina dell'esecuzione, sezione **Artifacts**: `marzianetto-macos`, `marzianetto-windows` e `marzianetto-linux`. GitHub li conserva per 30 giorni. Per creare anche una GitHub Release con i tre pacchetti allegati, crea e invia un tag versione, per esempio `git tag v0.1.1` seguito da `git push origin v0.1.1`. La Release viene pubblicata solo se tutte e tre le build riescono. Il workflow richiede il permesso `contents: write` esclusivamente per questo passaggio e non necessita di secret personali.
 
 La versione macOS usa firma ad hoc: **non** è notarizzata e non è una universal binary Intel + Apple Silicon. Le build Windows non sono firmate Authenticode. Per firmare pubblicamente servono certificati/credenziali e un workflow dedicato; non inserirli nei sorgenti. Controlla inoltre disponibilità dei runner, impostazioni Actions del repository e quote/costi del tuo piano GitHub, soprattutto per repository privati.
 

@@ -1,0 +1,70 @@
+name: Build desktop packages
+
+on:
+  push:
+    branches: [main, master]
+    tags: ['v*']
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Crea DMG
+        run: bash scripts/package-macos.sh
+        env:
+          GITHUB_RUN_NUMBER: ${{ github.run_number }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: marzianetto-macos-build-${{ github.run_number }}
+          path: dist/macos/*/*.dmg
+          if-no-files-found: error
+          retention-days: 30
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Crea ZIP ed eseguibile
+        run: ./scripts/package-windows.ps1
+        env:
+          GITHUB_RUN_NUMBER: ${{ github.run_number }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: marzianetto-windows-build-${{ github.run_number }}
+          path: dist/windows/*/*.zip
+          if-no-files-found: error
+          retention-days: 30
+
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Installa librerie Linux
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libx11-dev libxrandr-dev libxi-dev libxcursor-dev libxinerama-dev libgl1-mesa-dev libwayland-dev libxkbcommon-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Compila e prepara archivio
+        run: |
+          cargo build --locked --release
+          mkdir -p dist/linux
+          cp target/release/marzianetto dist/linux/
+          cp README.md README.en.md BUILDING.md dist/linux/
+          tar -czf dist/linux/marzianetto-linux-x86_64.tar.gz -C dist/linux marzianetto README.md README.en.md BUILDING.md
+        env:
+          GITHUB_RUN_NUMBER: ${{ github.run_number }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: marzianetto-linux-build-${{ github.run_number }}
+          path: dist/linux/*.tar.gz
+          if-no-files-found: error
+          retention-days: 30

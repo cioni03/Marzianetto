@@ -811,9 +811,12 @@ impl eframe::App for CompressorApp {
                     ui.vertical(|ui| {
                         ui.label(RichText::new("marzianetto").size(21.0).strong());
                         ui.label(
-                            RichText::new("Simple image compressor")
-                                .small()
-                                .color(theme::MUTED),
+                            RichText::new(format!(
+                                "Simple image compressor · build {}",
+                                env!("MARZIANETTO_BUILD_NUMBER")
+                            ))
+                            .small()
+                            .color(theme::MUTED),
                         );
                     });
                     ui.add_space(16.0);

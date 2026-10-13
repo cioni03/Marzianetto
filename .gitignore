@@ -1,0 +1,11 @@
+# Rust build output
+/target/
+
+# Generated packages and Flatpak build data
+/dist/
+/repo-flatpak/
+/build-flatpak/
+/packaging/flatpak/sources/
+
+# macOS metadata
+.DS_Store

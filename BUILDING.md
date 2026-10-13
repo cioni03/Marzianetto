@@ -129,13 +129,15 @@ Parte automaticamente su push a `main`/`master`, tag `v*` e pull request verso q
 | --- | --- |
 | macOS | `.dmg` contenente l'app, per l'architettura effettiva del runner `macos-latest` |
 | Windows | ZIP portabile con `.exe` x64 e documentazione |
-| Linux | `.flatpak` x64, documentazione e script per il menu contestuale dell'host |
+| Linux | archivio `.tar.gz` x64 con eseguibile e documentazione |
 
 Trovi i download nella pagina dell'esecuzione, sezione **Artifacts**. GitHub li conserva per 30 giorni (entro gli eventuali limiti del repository). Le build **non vengono aggiunte ai commit e non vengono pubblicate automaticamente come GitHub Release**. Il workflow richiede solo permesso di lettura al repository e non necessita di secret personali.
 
 La versione macOS usa firma ad hoc: **non** è notarizzata e non è una universal binary Intel + Apple Silicon. Le build Windows non sono firmate Authenticode. Per firmare pubblicamente servono certificati/credenziali e un workflow dedicato; non inserirli nei sorgenti. Controlla inoltre disponibilità dei runner, impostazioni Actions del repository e quote/costi del tuo piano GitHub, soprattutto per repository privati.
 
 Windows e Linux riceveranno il primo collaudo completo al primo avvio della Action. La sola aggiunta del file YAML non dimostra che le build remote siano già riuscite: eventuali errori saranno visibili nei log di ciascun job.
+
+Nella UI viene mostrato `build N`: `N` è il numero della stessa esecuzione GitHub Actions (`github.run_number`), condiviso dai tre sistemi. Le build locali mostrano `build local`. Le build Linux del workflow sono binari nativi, non bundle Flatpak; per Flatpak segui la procedura manuale descritta sopra.
 
 ## Stato delle verifiche
 

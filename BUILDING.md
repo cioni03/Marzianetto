@@ -38,8 +38,11 @@ Lo script applica una **firma ad hoc**, adatta al collaudo locale ma non suffici
 APP="dist/macos/aarch64-apple-darwin/marzianetto.app"
 DMG="dist/macos/aarch64-apple-darwin/marzianetto-aarch64-apple-darwin.dmg"
 codesign --force --deep --options runtime --timestamp --sign "Developer ID Application: NOME (TEAMID)" "$APP"
-ditto "$APP" "dist/macos/aarch64-apple-darwin/dmg-root/marzianetto.app"
-hdiutil create -volname "marzianetto" -srcfolder "dist/macos/aarch64-apple-darwin/dmg-root" -ov -format UDZO "$DMG"
+STAGE="$(mktemp -d)"
+ditto "$APP" "$STAGE/marzianetto.app"
+ln -s /Applications "$STAGE/Applications"
+hdiutil create -volname "marzianetto" -srcfolder "$STAGE" -ov -format UDZO "$DMG"
+rm -rf "$STAGE"
 xcrun notarytool submit "$DMG" --keychain-profile "PROFILO_NOTARIZZAZIONE" --wait
 xcrun stapler staple "$DMG"
 ```
@@ -75,6 +78,12 @@ cargo build --locked --release
 ```
 
 L'eseguibile nativo è `target/release/marzianetto`. Per distribuire un binario nativo, compila su una distribuzione con glibc non più recente di quelle che vuoi supportare, oppure usa Flatpak.
+
+## Linux: AppImage
+
+Il workflow compila su Ubuntu 22.04 e produce `marzianetto-linux-x86_64.AppImage`, includendo le librerie distribuibili tramite linuxdeploy. Per crearlo manualmente su Linux x64, installa le dipendenze della build nativa più `curl`, `file`, `patchelf` e `desktop-file-utils`, poi esegui `bash scripts/package-linux.sh`. Lo script scarica linuxdeploy dalla sua release `continuous` e richiede accesso alla rete.
+
+Per avviare il download: `chmod +x marzianetto-linux-x86_64.AppImage`, poi apri il file. Se FUSE non è disponibile, usa `./marzianetto-linux-x86_64.AppImage --appimage-extract-and-run`. Servono comunque driver grafici e, per il selettore file, un portale desktop funzionante. Non è una garanzia di compatibilità con ogni distribuzione: la build richiede glibc 2.35 o successiva e non è destinata ad Alpine/musl o Linux ARM64. Sposta il file nella posizione definitiva prima di installare il menu contestuale dall'app.
 
 ## Linux: bundle `.flatpak`
 
@@ -129,7 +138,7 @@ Parte automaticamente su push a `main`/`master`, tag `v*` e pull request verso q
 | --- | --- |
 | macOS | `.dmg` contenente l'app, per l'architettura effettiva del runner `macos-latest` |
 | Windows | ZIP portabile con `.exe` x64 e documentazione |
-| Linux | archivio `.tar.gz` x64 con eseguibile e documentazione |
+| Linux | `.AppImage` x64 |
 
 Trovi i download nella pagina dell'esecuzione, sezione **Artifacts**: `marzianetto-macos`, `marzianetto-windows` e `marzianetto-linux`. GitHub li conserva per 30 giorni. Dopo ogni build riuscita su `main`, il workflow crea o aggiorna automaticamente la Release **marzianetto vVERSIONE**, usando la versione di `Cargo.toml` (attualmente `v0.1.0`). Finché la versione non cambia, aggiorna la stessa Release e sposta il suo tag al commit compilato; aumentando la versione viene creata una nuova Release. Se la build parte dal push di un tag `v*`, usa invece quel tag, senza spostarlo. Prima di pubblicare verifica che siano presenti tutti e tre i pacchetti, anche nelle sottocartelle. Le pull request non pubblicano Release. Per questo passaggio il workflow usa il permesso `contents: write`; non servono secret personali. La vecchia Release `latest`, se presente, non viene rimossa automaticamente.
 
@@ -137,7 +146,7 @@ La versione macOS usa firma ad hoc: **non** è notarizzata e non è una universa
 
 Windows e Linux riceveranno il primo collaudo completo al primo avvio della Action. La sola aggiunta del file YAML non dimostra che le build remote siano già riuscite: eventuali errori saranno visibili nei log di ciascun job.
 
-Nella UI viene mostrato `build N`: `N` è il numero della stessa esecuzione GitHub Actions (`github.run_number`), condiviso dai tre sistemi. Le build locali mostrano `build local`. Le build Linux del workflow sono binari nativi, non bundle Flatpak; per Flatpak segui la procedura manuale descritta sopra.
+Nella UI viene mostrato `build N`: `N` è il numero della stessa esecuzione GitHub Actions (`github.run_number`), condiviso dai tre sistemi. Le build locali mostrano `build local`. Il workflow distribuisce Linux come AppImage, non come bundle Flatpak; per Flatpak segui la procedura manuale descritta sopra. Il DMG macOS contiene solo l'app e il collegamento ad Applicazioni, senza documentazione aggiuntiva.
 
 ## Stato delle verifiche
 

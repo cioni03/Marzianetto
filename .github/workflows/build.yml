@@ -49,27 +49,22 @@ jobs:
           retention-days: 30
 
   linux:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
       - name: Installa librerie Linux
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential pkg-config libx11-dev libxrandr-dev libxi-dev libxcursor-dev libxinerama-dev libgl1-mesa-dev libwayland-dev libxkbcommon-dev
+          sudo apt-get install -y build-essential pkg-config curl file patchelf desktop-file-utils libx11-dev libxrandr-dev libxi-dev libxcursor-dev libxinerama-dev libgl1-mesa-dev libwayland-dev libxkbcommon-dev
       - uses: dtolnay/rust-toolchain@stable
-      - name: Compila e prepara archivio
-        run: |
-          cargo build --locked --release
-          mkdir -p dist/linux
-          cp target/release/marzianetto dist/linux/
-          cp README.md README.en.md BUILDING.md dist/linux/
-          tar -czf dist/linux/marzianetto-linux-x86_64.tar.gz -C dist/linux marzianetto README.md README.en.md BUILDING.md
+      - name: Crea AppImage
+        run: bash scripts/package-linux.sh
         env:
           GITHUB_RUN_NUMBER: ${{ github.run_number }}
       - uses: actions/upload-artifact@v4
         with:
           name: marzianetto-linux
-          path: dist/linux/*.tar.gz
+          path: dist/linux/*.AppImage
           if-no-files-found: error
           retention-days: 30
 
@@ -111,7 +106,7 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          for platform, extension in [('macos', '*.dmg'), ('windows', '*.zip'), ('linux', '*.tar.gz')]:
+          for platform, extension in [('macos', '*.dmg'), ('windows', '*.zip'), ('linux', '*.AppImage')]:
               packages = list((Path('release-assets') / platform).rglob(extension))
               if len(packages) != 1:
                   raise SystemExit(f'{platform}: atteso un pacchetto, trovati {len(packages)}')
@@ -165,4 +160,22 @@ jobs:
           files: |
             release-assets/macos/**/*.dmg
             release-assets/windows/**/*.zip
-            release-assets/linux/**/*.tar.gz
+            release-assets/linux/**/*.AppImage
+      - name: Rimuovi il precedente archivio Linux dalla Release
+        uses: actions/github-script@v7
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const { data: release } = await github.rest.repos.getReleaseByTag({
+              owner, repo, tag: process.env.RELEASE_TAG,
+            });
+            const assets = await github.paginate(github.rest.repos.listReleaseAssets, {
+              owner, repo, release_id: release.id,
+            });
+            for (const asset of assets) {
+              if (asset.name === 'marzianetto-linux-x86_64.tar.gz') {
+                await github.rest.repos.deleteReleaseAsset({ owner, repo, asset_id: asset.id });
+              }
+            }

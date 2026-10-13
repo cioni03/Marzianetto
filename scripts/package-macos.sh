@@ -42,13 +42,12 @@ PY
 # Firma ad hoc per uso locale, NON equivalente a Developer ID/notarizzazione.
 codesign --force --deep --sign - "$APP"
 codesign --verify --deep --strict "$APP"
-STAGE="$OUT/dmg-root"
-mkdir -p "$STAGE"
+STAGE="$(mktemp -d "$OUT/dmg-root.XXXXXX")"
+trap 'rm -rf "$STAGE"' EXIT
 ditto "$APP" "$STAGE/marzianetto.app"
 if [[ ! -e "$STAGE/Applications" && ! -L "$STAGE/Applications" ]]; then
     ln -s /Applications "$STAGE/Applications"
 fi
-cp README.md README.en.md BUILDING.md "$STAGE/"
 hdiutil create -volname "marzianetto" -srcfolder "$STAGE" -ov -format UDZO "$OUT/marzianetto-$TARGET.dmg"
 echo "Creati: $APP"
 echo "DMG: $OUT/marzianetto-$TARGET.dmg"

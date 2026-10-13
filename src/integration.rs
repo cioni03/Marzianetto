@@ -11,6 +11,15 @@ const OWNER: &str = "it.marzianetto.context-menu.v1";
 const LEGACY_OWNER: &str = "it.imagecompressor.context-menu.v1";
 const LABEL: &str = "Invia a marzianetto";
 
+fn launcher_path() -> std::io::Result<PathBuf> {
+    // current_exe() dentro un'AppImage è un percorso di mount temporaneo.
+    #[cfg(target_os = "linux")]
+    if let Some(appimage) = std::env::var_os("APPIMAGE") {
+        return Ok(PathBuf::from(appimage));
+    }
+    std::env::current_exe()
+}
+
 pub fn description() -> &'static str {
     if std::env::var_os("FLATPAK_ID").is_some() {
         "Flatpak: il menu va installato dall'host Linux con scripts/install-flatpak-context-menu.py. L'app nella sandbox non può registrare correttamente un eseguibile /app nel menu dell'host."
@@ -27,7 +36,7 @@ pub fn install() -> Result<String> {
     if std::env::var_os("FLATPAK_ID").is_some() {
         bail!("{}", description());
     }
-    let executable = std::env::current_exe()?;
+    let executable = launcher_path()?;
     #[cfg(target_os = "windows")]
     windows::install(&executable)?;
     #[cfg(not(target_os = "windows"))]
@@ -61,7 +70,7 @@ pub fn uninstall() -> Result<String> {
     windows::uninstall()?;
     #[cfg(not(target_os = "windows"))]
     {
-        let files = native_files(&std::env::current_exe()?)?;
+        let files = native_files(&launcher_path()?)?;
         for file in &files {
             check_owned(&file.path)?;
         }
@@ -93,7 +102,7 @@ pub fn installed() -> bool {
     }
     #[cfg(not(target_os = "windows"))]
     {
-        std::env::current_exe()
+        launcher_path()
             .ok()
             .and_then(|exe| native_files(&exe).ok())
             .is_some_and(|files| {

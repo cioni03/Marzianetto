@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=marzianetto
+GenericName=Image compressor
+Comment=Compress and resize images
+Comment[it]=Comprimi e ridimensiona immagini
+Keywords=image;photo;compress;resize;marzianetto;
+Exec=marzianetto -- %F
+Icon=it.marzianetto.app
+Terminal=false
+Categories=Graphics;Photography;
+MimeType=image/jpeg;image/png;image/webp;image/bmp;image/gif;image/tiff;inode/directory;
+StartupNotify=true

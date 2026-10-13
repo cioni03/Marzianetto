@@ -1,0 +1,31 @@
+app-id: it.marzianetto.app
+runtime: org.freedesktop.Platform
+runtime-version: '25.08'
+sdk: org.freedesktop.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: marzianetto
+finish-args:
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  # Necessario per importare cartelle arbitrarie e creare output accanto ad esse.
+  # Non concede rete. È un permesso ampio, documentato in BUILDING.md.
+  - --filesystem=host
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin
+  env:
+    CARGO_HOME: /run/build/marzianetto/cargo-home
+modules:
+  - name: marzianetto
+    buildsystem: simple
+    build-commands:
+      - cargo build --offline --locked --release
+      - install -Dm755 target/release/marzianetto /app/bin/marzianetto
+      - install -Dm644 assets/it.marzianetto.app.desktop /app/share/applications/it.marzianetto.app.desktop
+      - install -Dm644 assets/it.marzianetto.app.svg /app/share/icons/hicolor/scalable/apps/it.marzianetto.app.svg
+      - install -Dm644 assets/it.marzianetto.app.metainfo.xml /app/share/metainfo/it.marzianetto.app.metainfo.xml
+    sources:
+      - type: dir
+        path: sources

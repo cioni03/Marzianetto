@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>it.marzianetto.app</id>
+  <name>marzianetto</name>
+  <summary>Compress and convert images</summary>
+  <summary xml:lang="it">Comprimi e ridimensiona immagini in gruppo</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <description>
+    <p>A simple desktop image compressor with drag and drop, previews, resizing and privacy controls.</p>
+    <p>Convert images to JPEG, PNG, WebP, AVIF, BMP or TIFF and review per-file savings before managing your output copies.</p>
+  </description>
+  <launchable type="desktop-id">it.marzianetto.app.desktop</launchable>
+  <icon type="stock">it.marzianetto.app</icon>
+  <content_rating type="oars-1.1"/>
+</component>

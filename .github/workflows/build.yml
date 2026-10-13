@@ -93,7 +93,19 @@ jobs:
         with:
           script: |
             const { owner, repo } = context.repo;
+            let tagExists = true;
             try {
+              await github.rest.git.getRef({
+                owner,
+                repo,
+                ref: 'tags/latest',
+              });
+            } catch (error) {
+              if (error.status !== 404) throw error;
+              tagExists = false;
+            }
+
+            if (tagExists) {
               await github.rest.git.updateRef({
                 owner,
                 repo,
@@ -101,8 +113,7 @@ jobs:
                 sha: context.sha,
                 force: true,
               });
-            } catch (error) {
-              if (error.status !== 404) throw error;
+            } else {
               await github.rest.git.createRef({
                 owner,
                 repo,

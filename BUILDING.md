@@ -36,7 +36,7 @@ Apri il DMG e copia `marzianetto.app` in **Applicazioni**. Avvia la copia instal
 
 All'avvio la `.app` installata cerca su GitHub una release stabile più recente con lo ZIP della stessa architettura e un digest SHA-256. **Aggiorna** scarica e verifica lo ZIP, poi chiude, sostituisce e riavvia l'app. **Salta questa versione** ricorda solo il tag selezionato. L'aggiornamento richiede una cartella scrivibile, non chiede privilegi elevati e non cambia le regole di Gatekeeper. Windows, Linux e Flatpak non usano questo updater.
 
-Per pubblicare un aggiornamento, incrementa la versione in `Cargo.toml` e aggiorna `Cargo.lock`. Crea e invia un **nuovo** tag stabile corrispondente, ad esempio `v0.1.1`; il workflow pubblica la release e i pacchetti solo dai tag, non dai push su `main`. Non spostare tag già pubblicati. Non servono token sul client o chiavi dedicate all'updater: la fiducia si basa su GitHub Releases e il digest verifica l'integrità del download.
+Per pubblicare un aggiornamento, avvia il workflow manuale descritto sotto e inserisci una versione nuova, ad esempio `0.1.1`. Non servono token sul client o chiavi dedicate all'updater: la fiducia si basa su GitHub Releases e il digest verifica l'integrità del download.
 
 ### Distribuzione pubblica e Gatekeeper
 
@@ -136,19 +136,19 @@ python3 scripts/install-flatpak-context-menu.py --remove
 
 Negli altri file manager usa **Apri con → marzianetto**. Gli script richiedono Python 3 (3.8+). Le preferenze Flatpak sono isolate sotto `~/.var/app/it.marzianetto.app/`.
 
-## Build automatiche con GitHub Actions
+## Build manuale e release automatica con GitHub Actions
 
 Il workflow [`.github/workflows/build.yml`](.github/workflows/build.yml) compila i pacchetti direttamente sui runner GitHub. **Non devi caricare la tua `.app`, `target/`, `dist/` o le crate vendorizzate**: bastano sorgenti, `Cargo.toml`, `Cargo.lock`, script, asset e workflow. `.gitignore` esclude già i file generati.
 
-Parte automaticamente su push a `main`/`master`, tag `v*` e pull request verso questi branch. Puoi anche avviarlo manualmente da **Actions → Build desktop packages → Run workflow**. I tre job sono indipendenti:
+Vai in **Actions → Build desktop packages → Run workflow**, seleziona `main`, inserisci **version** (ad esempio `0.1.1`) e avvia. I push, i tag e le pull request non avviano la build. La versione viene applicata a `Cargo.toml` e `Cargo.lock` solo sui runner: non devi modificarli, fare un commit di versione o creare un tag a mano. Usa una versione stabile più recente di quelle pubblicate.
 
 | Job | Artefatto |
 | --- | --- |
-| macOS | `.dmg` contenente l'app, per l'architettura effettiva del runner `macos-latest` |
+| macOS | `.dmg` e `.app.zip` per l'architettura del runner `macos-latest` |
 | Windows | ZIP portabile con `.exe` x64 e documentazione |
 | Linux | `.AppImage` x64 |
 
-Trovi i download nella pagina dell'esecuzione, sezione **Artifacts**: `marzianetto-macos`, `marzianetto-windows` e `marzianetto-linux`. GitHub li conserva per 30 giorni. Dopo ogni build riuscita su `main`, il workflow crea o aggiorna automaticamente la Release **marzianetto vVERSIONE**, usando la versione di `Cargo.toml` (attualmente `v0.1.0`). Finché la versione non cambia, aggiorna la stessa Release e sposta il suo tag al commit compilato; aumentando la versione viene creata una nuova Release. Se la build parte dal push di un tag `v*`, usa invece quel tag, senza spostarlo. Prima di pubblicare verifica che siano presenti tutti e tre i pacchetti, anche nelle sottocartelle. Le pull request non pubblicano Release. Per questo passaggio il workflow usa il permesso `contents: write`; non servono secret personali. La vecchia Release `latest`, se presente, non viene rimossa automaticamente.
+Trovi i file anche nella sezione **Artifacts** dell'esecuzione, per 30 giorni. Se tutte e tre le build riescono, il workflow carica i pacchetti in una bozza e poi pubblica automaticamente **marzianetto vVERSIONE** come ultima release. GitHub crea il tag sul commit compilato; non vengono sovrascritte release esistenti. Al prossimo avvio, le app macOS compatibili che includono già l'updater propongono il nuovo aggiornamento.
 
 La versione macOS usa firma ad hoc: **non** è notarizzata e non è una universal binary Intel + Apple Silicon. Le build Windows non sono firmate Authenticode. Per firmare pubblicamente servono certificati/credenziali e un workflow dedicato; non inserirli nei sorgenti. Controlla inoltre disponibilità dei runner, impostazioni Actions del repository e quote/costi del tuo piano GitHub, soprattutto per repository privati.
 

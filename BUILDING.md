@@ -154,7 +154,7 @@ La versione macOS usa firma ad hoc: **non** è notarizzata e non è una universa
 
 Windows e Linux riceveranno il primo collaudo completo al primo avvio della Action. La sola aggiunta del file YAML non dimostra che le build remote siano già riuscite: eventuali errori saranno visibili nei log di ciascun job.
 
-Nella UI viene mostrato `build N`: `N` è il numero della stessa esecuzione GitHub Actions (`github.run_number`), condiviso dai tre sistemi. Le build locali mostrano `build local`. Il workflow distribuisce Linux come AppImage, non come bundle Flatpak; per Flatpak segui la procedura manuale descritta sopra. Il DMG macOS contiene solo l'app e il collegamento ad Applicazioni, senza documentazione aggiuntiva.
+Sotto il nome dell'app compare solo la versione `X.Y.Z`, incorporata nella build e corrispondente al tag della release. Le build locali usano la versione di `Cargo.toml`. Il workflow distribuisce Linux come AppImage, non come bundle Flatpak; per Flatpak segui la procedura manuale descritta sopra. Il DMG macOS contiene solo l'app e il collegamento ad Applicazioni, senza documentazione aggiuntiva.
 
 ## Stato delle verifiche
 

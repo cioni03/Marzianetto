@@ -856,12 +856,9 @@ impl eframe::App for CompressorApp {
                     ui.vertical(|ui| {
                         ui.label(RichText::new("marzianetto").size(21.0).strong());
                         ui.label(
-                            RichText::new(format!(
-                                "Simple image compressor · build {}",
-                                env!("MARZIANETTO_BUILD_NUMBER")
-                            ))
-                            .small()
-                            .color(theme::MUTED),
+                            RichText::new(env!("CARGO_PKG_VERSION"))
+                                .small()
+                                .color(theme::MUTED),
                         );
                     });
                     ui.add_space(16.0);
@@ -1091,6 +1088,7 @@ mod tests {
                 app.settings.format = format;
             }
             let mut frame = eframe::Frame::_new_kittest();
+            let mut version_visible = false;
             for _ in 0..3 {
                 let output = ctx.run(
                     egui::RawInput {
@@ -1103,6 +1101,12 @@ mod tests {
                 // I comandi principali devono rimanere dentro la finestra.
                 for shape in output.shapes {
                     if let egui::Shape::Text(text) = shape.shape {
+                        if text.galley.job.text == env!("CARGO_PKG_VERSION") {
+                            version_visible = true;
+                            assert!(
+                                text.pos.x >= 0.0 && text.pos.x + text.galley.size().x <= size.x
+                            );
+                        }
                         if [
                             "+ Immagini",
                             "+ Cartella",
@@ -1123,6 +1127,7 @@ mod tests {
                     }
                 }
             }
+            assert!(version_visible);
         }
     }
 

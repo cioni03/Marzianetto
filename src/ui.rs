@@ -66,6 +66,8 @@ pub struct CompressorApp {
     integration_installed: bool,
     integration_rx: Option<Receiver<(bool, Result<String, String>)>>,
     integration_message: Option<String>,
+    #[cfg(target_os = "macos")]
+    updater: crate::updater::Updater,
 }
 
 impl CompressorApp {
@@ -90,6 +92,8 @@ impl CompressorApp {
                 Some(format!("Impostazioni non caricate: {err:#}")),
             ),
         };
+        #[cfg(target_os = "macos")]
+        let updater = crate::updater::Updater::start(&cc.egui_ctx, settings.skipped_update.clone());
         let mut app = Self {
             logo,
             settings,
@@ -113,6 +117,8 @@ impl CompressorApp {
             integration_installed: integration::installed(),
             integration_rx: None,
             integration_message: None,
+            #[cfg(target_os = "macos")]
+            updater,
         };
         if !paths.is_empty() {
             app.receive_paths(paths);
@@ -1018,6 +1024,16 @@ impl eframe::App for CompressorApp {
             }
         });
         self.popups(ctx);
+        #[cfg(target_os = "macos")]
+        if !blocked
+            && !self.show_integration
+            && !self.show_messages
+            && !self.confirm_close
+            && self.updater.show(ctx, &mut self.settings)
+        {
+            self.save_due = Some(Instant::now() + Duration::from_millis(400));
+            ctx.request_repaint_after(Duration::from_millis(400));
+        }
         if ctx.input(|input| !input.raw.hovered_files.is_empty()) {
             let painter = ctx.layer_painter(egui::LayerId::new(
                 egui::Order::Tooltip,

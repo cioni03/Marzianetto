@@ -100,6 +100,8 @@ pub struct Settings {
     pub destination: Destination,
     pub suffix: String,
     pub strip_metadata: bool,
+    #[cfg(target_os = "macos")]
+    pub skipped_update: Option<String>,
 }
 
 impl Default for Settings {
@@ -115,6 +117,8 @@ impl Default for Settings {
             destination: Destination::SiblingFolder,
             suffix: "_compressed".into(),
             strip_metadata: true,
+            #[cfg(target_os = "macos")]
+            skipped_update: None,
         }
     }
 }
@@ -244,6 +248,22 @@ mod tests {
         assert!(settings.strip_metadata);
         assert!(settings.convert_format);
         assert!(settings.compression);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn skipped_update_is_saved_and_defaults_to_none() {
+        assert!(serde_json::from_str::<Settings>("{}")
+            .unwrap()
+            .skipped_update
+            .is_none());
+        let settings = Settings {
+            skipped_update: Some("v0.1.2".into()),
+            ..Default::default()
+        };
+        let restored: Settings =
+            serde_json::from_slice(&serde_json::to_vec(&settings).unwrap()).unwrap();
+        assert_eq!(restored.skipped_update, settings.skipped_update);
     }
 
     #[test]

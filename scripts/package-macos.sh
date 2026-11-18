@@ -49,6 +49,10 @@ if [[ ! -e "$STAGE/Applications" && ! -L "$STAGE/Applications" ]]; then
     ln -s /Applications "$STAGE/Applications"
 fi
 hdiutil create -volname "marzianetto" -srcfolder "$STAGE" -ov -format UDZO "$OUT/marzianetto-$TARGET.dmg"
+UPDATE="$OUT/marzianetto-$TARGET.app.zip"
+ditto -c -k --keepParent "$APP" "$STAGE/update.zip"
+mv -f "$STAGE/update.zip" "$UPDATE"
 echo "Creati: $APP"
 echo "DMG: $OUT/marzianetto-$TARGET.dmg"
+echo "ZIP aggiornamenti: $UPDATE"
 echo "Per distribuirlo pubblicamente, firma con Developer ID e notarizza: vedi BUILDING.md."

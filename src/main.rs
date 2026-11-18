@@ -8,6 +8,8 @@ mod model;
 mod settings;
 mod theme;
 mod ui;
+#[cfg(target_os = "macos")]
+mod updater;
 
 fn main() -> eframe::Result {
     let args: Vec<_> = std::env::args_os().skip(1).collect();

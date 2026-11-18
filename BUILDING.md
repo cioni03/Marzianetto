@@ -19,6 +19,8 @@ Lo script produce una app e un DMG in `dist/macos/<target>/` per l'architettura 
 - Apple Silicon: `aarch64-apple-darwin`.
 - Intel: `x86_64-apple-darwin`.
 
+Produce anche `marzianetto-<target>.app.zip` per gli aggiornamenti in-app. Lo ZIP non sostituisce il DMG per l'installazione manuale.
+
 Per scegliere il target esplicitamente:
 
 ```sh
@@ -29,6 +31,12 @@ bash scripts/package-macos.sh x86_64-apple-darwin
 Per Intel su Apple Silicon servono le librerie/SDK x86_64 di Xcode. Meglio testare ciascun artefatto sul relativo hardware o con Rosetta. Questi comandi producono **due app separate**, non una universal binary; una universal richiede compilare entrambi i target e unirli con `lipo`, poi rifirmare il bundle.
 
 Apri il DMG e copia `marzianetto.app` in **Applicazioni**. Avvia la copia installata e reinstalla il menu contestuale dalla sua UI, così non rimarrà collegato all'eseguibile di `target/` o al DMG.
+
+### Aggiornamenti in-app
+
+All'avvio la `.app` installata cerca su GitHub una release stabile più recente con lo ZIP della stessa architettura e un digest SHA-256. **Aggiorna** scarica e verifica lo ZIP, poi chiude, sostituisce e riavvia l'app. **Salta questa versione** ricorda solo il tag selezionato. L'aggiornamento richiede una cartella scrivibile, non chiede privilegi elevati e non cambia le regole di Gatekeeper. Windows, Linux e Flatpak non usano questo updater.
+
+Per pubblicare un aggiornamento, incrementa la versione in `Cargo.toml` e aggiorna `Cargo.lock`. Crea e invia un **nuovo** tag stabile corrispondente, ad esempio `v0.1.1`; il workflow pubblica la release e i pacchetti solo dai tag, non dai push su `main`. Non spostare tag già pubblicati. Non servono token sul client o chiavi dedicate all'updater: la fiducia si basa su GitHub Releases e il digest verifica l'integrità del download.
 
 ### Distribuzione pubblica e Gatekeeper
 

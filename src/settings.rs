@@ -11,16 +11,18 @@ pub enum OutputFormat {
     Avif,
     Bmp,
     Tiff,
+    Gif,
 }
 
 impl OutputFormat {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Jpeg,
         Self::Png,
         Self::WebP,
         Self::Avif,
         Self::Bmp,
         Self::Tiff,
+        Self::Gif,
     ];
 
     pub fn label(self) -> &'static str {
@@ -31,6 +33,7 @@ impl OutputFormat {
             Self::Avif => "AVIF",
             Self::Bmp => "BMP",
             Self::Tiff => "TIFF",
+            Self::Gif => "GIF",
         }
     }
 
@@ -42,8 +45,28 @@ impl OutputFormat {
             Self::Avif => "avif",
             Self::Bmp => "bmp",
             Self::Tiff => "tiff",
+            Self::Gif => "gif",
         }
     }
+
+    pub fn from_source(format: &str) -> Result<Self> {
+        match format {
+            "Jpeg" => Ok(Self::Jpeg),
+            "Png" => Ok(Self::Png),
+            "WebP" => Ok(Self::WebP),
+            "Avif" => Ok(Self::Avif),
+            "Bmp" => Ok(Self::Bmp),
+            "Tiff" => Ok(Self::Tiff),
+            "Gif" => Ok(Self::Gif),
+            _ => bail!(
+                "Formato originale non supportato: {format}. Scegli un formato di conversione."
+            ),
+        }
+    }
+}
+
+fn enabled() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -68,7 +91,11 @@ pub struct Settings {
     /// per leggere senza migrazioni anche le preferenze della prima versione.
     pub long_edge: u32,
     pub resize_edge: ResizeEdge,
+    pub compression: bool,
     pub quality: u8,
+    /// Le preferenze precedenti convertivano sempre nel formato selezionato.
+    #[serde(default = "enabled")]
+    pub convert_format: bool,
     pub format: OutputFormat,
     pub destination: Destination,
     pub suffix: String,
@@ -81,8 +108,10 @@ impl Default for Settings {
             resize: false,
             long_edge: 1920,
             resize_edge: ResizeEdge::Long,
+            compression: true,
             quality: 80,
-            format: OutputFormat::Jpeg,
+            convert_format: false,
+            format: OutputFormat::Png,
             destination: Destination::SiblingFolder,
             suffix: "_compressed".into(),
             strip_metadata: true,
@@ -91,6 +120,44 @@ impl Default for Settings {
 }
 
 impl Settings {
+    pub fn has_operation(&self) -> bool {
+        self.compression || self.convert_format || self.resize
+    }
+
+    pub fn action_label(&self) -> &'static str {
+        match (self.compression, self.convert_format, self.resize) {
+            (true, true, _) => "Comprimi e converti",
+            (true, false, _) => "Comprimi immagini",
+            (false, true, _) => "Converti immagini",
+            (false, false, true) => "Ridimensiona immagini",
+            _ => "Elabora immagini",
+        }
+    }
+
+    pub fn encoding_quality(&self) -> u8 {
+        if self.compression {
+            self.quality
+        } else {
+            100
+        }
+    }
+
+    pub fn output_format(&self, source_format: &str) -> Result<OutputFormat> {
+        if self.convert_format {
+            Ok(self.format)
+        } else {
+            OutputFormat::from_source(source_format)
+        }
+    }
+
+    pub fn output_label(&self) -> &'static str {
+        if self.convert_format {
+            self.format.label()
+        } else {
+            "Formato originale"
+        }
+    }
+
     pub fn validate(&self) -> Result<()> {
         if self.quality > 100 || self.long_edge == 0 || self.long_edge > 100_000 {
             bail!("Qualità o dimensione non valida.");
@@ -175,5 +242,67 @@ mod tests {
         assert_eq!(settings.long_edge, 1920);
         assert_eq!(settings.resize_edge, ResizeEdge::Long);
         assert!(settings.strip_metadata);
+        assert!(settings.convert_format);
+        assert!(settings.compression);
+    }
+
+    #[test]
+    fn conversion_is_optional_and_preferences_round_trip() {
+        let mut settings = Settings::default();
+        assert!(!settings.convert_format);
+        for format in OutputFormat::ALL {
+            assert_eq!(
+                settings.output_format(&format!("{:?}", format)).unwrap(),
+                format
+            );
+        }
+        settings.convert_format = true;
+        settings.format = OutputFormat::WebP;
+        assert_eq!(settings.output_format("Jpeg").unwrap(), OutputFormat::WebP);
+        let restored: Settings =
+            serde_json::from_str(&serde_json::to_string(&settings).unwrap()).unwrap();
+        assert_eq!(restored, settings);
+        let legacy: Settings = serde_json::from_str(r#"{"format":"Jpeg"}"#).unwrap();
+        assert!(legacy.convert_format);
+        assert_eq!(legacy.output_format("Png").unwrap(), OutputFormat::Jpeg);
+    }
+
+    #[test]
+    fn compression_and_conversion_are_independent_and_saved() {
+        for compression in [false, true] {
+            for convert_format in [false, true] {
+                let settings = Settings {
+                    compression,
+                    convert_format,
+                    quality: 17,
+                    format: OutputFormat::WebP,
+                    ..Default::default()
+                };
+                assert_eq!(settings.has_operation(), compression || convert_format);
+                assert_eq!(
+                    settings.encoding_quality(),
+                    if compression { 17 } else { 100 }
+                );
+                assert_eq!(
+                    settings.output_format("Png").unwrap(),
+                    if convert_format {
+                        OutputFormat::WebP
+                    } else {
+                        OutputFormat::Png
+                    }
+                );
+                let restored: Settings =
+                    serde_json::from_str(&serde_json::to_string(&settings).unwrap()).unwrap();
+                assert_eq!(restored, settings);
+            }
+        }
+        let resize_only = Settings {
+            compression: false,
+            convert_format: false,
+            resize: true,
+            ..Default::default()
+        };
+        assert!(resize_only.has_operation());
+        assert_eq!(resize_only.action_label(), "Ridimensiona immagini");
     }
 }

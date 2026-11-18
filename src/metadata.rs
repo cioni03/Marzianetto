@@ -137,6 +137,7 @@ mod tests {
         for format in OutputFormat::ALL {
             let settings = Settings {
                 destination: Destination::SameFolder,
+                convert_format: true,
                 format,
                 strip_metadata: true,
                 ..Default::default()
@@ -191,6 +192,7 @@ mod tests {
         let source = fixture(dir.path());
         let settings = Settings {
             destination: Destination::SameFolder,
+            convert_format: true,
             format: OutputFormat::WebP,
             strip_metadata: false,
             ..Default::default()

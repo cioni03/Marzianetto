@@ -348,52 +348,87 @@ impl CompressorApp {
                 .color(theme::MUTED),
         );
         ui.add_space(theme::GAP);
-        theme::card(ui, "01", "Formato e qualità", |ui| {
-            egui::ComboBox::from_id_salt("output_format")
-                .selected_text(self.settings.format.label())
-                .width(ui.available_width())
-                .show_ui(ui, |ui| {
-                    for format in OutputFormat::ALL {
-                        ui.selectable_value(&mut self.settings.format, format, format.label());
-                    }
-                });
-            ui.horizontal(|ui| {
-                ui.label(if self.settings.format == OutputFormat::Png {
-                    "Compressione"
-                } else {
-                    "Qualità"
-                });
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(
-                        RichText::new(format!("{} / 100", self.settings.quality))
-                            .strong()
-                            .color(theme::ACCENT),
-                    );
-                });
-            });
-            ui.spacing_mut().slider_width = ui.available_width();
-            ui.add_enabled(
-                !matches!(self.settings.format, OutputFormat::Bmp | OutputFormat::Tiff),
-                egui::Slider::new(&mut self.settings.quality, 0..=100).show_value(false),
-            );
+        theme::card(ui, "01", "Operazioni", |ui| {
+            ui.checkbox(&mut self.settings.convert_format, "Converti formato");
+            if self.settings.convert_format {
+                egui::ComboBox::from_id_salt("output_format")
+                    .selected_text(self.settings.format.label())
+                    .width(ui.available_width())
+                    .show_ui(ui, |ui| {
+                        for format in OutputFormat::ALL {
+                            ui.selectable_value(&mut self.settings.format, format, format.label());
+                        }
+                    });
+            } else {
+                ui.label(
+                    RichText::new("Ogni immagine mantiene il proprio formato originale.")
+                        .small()
+                        .color(theme::MUTED),
+                );
+            }
             ui.label(
-                RichText::new(match self.settings.format {
-                    OutputFormat::Png => {
-                        "Senza perdita: veloce 0–33, normale 34–66, massima 67–100."
-                    }
-                    OutputFormat::Bmp | OutputFormat::Tiff => {
-                        "Qualità fissa. Il file potrebbe diventare più grande."
-                    }
-                    OutputFormat::Jpeg => "Più qualità, più dettaglio. Trasparenza su bianco.",
-                    _ => "Più qualità, più dettaglio. Trasparenza conservata.",
-                })
+                RichText::new(
+                    "Trasparenza mantenuta dove supportata; altrimenti sfondo bianco automatico.",
+                )
                 .small()
                 .color(theme::MUTED),
             );
+            ui.checkbox(&mut self.settings.compression, "Comprimi");
+            if self.settings.compression {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        if self.settings.convert_format && self.settings.format == OutputFormat::Png
+                        {
+                            "Compressione"
+                        } else {
+                            "Qualità"
+                        },
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(
+                            RichText::new(format!("{} / 100", self.settings.quality))
+                                .strong()
+                                .color(theme::ACCENT),
+                        );
+                    });
+                });
+                ui.spacing_mut().slider_width = ui.available_width();
+                ui.add_enabled(
+                    !self.settings.convert_format
+                        || !matches!(
+                            self.settings.format,
+                            OutputFormat::Bmp | OutputFormat::Tiff | OutputFormat::Gif
+                        ),
+                    egui::Slider::new(&mut self.settings.quality, 0..=100).show_value(false),
+                );
+                let hint = match (self.settings.convert_format, self.settings.format) {
+                    (false, _) => {
+                        "Qualità applicata dove supportata. PNG è senza perdita; BMP/TIFF/GIF hanno qualità fissa."
+                    }
+                    (true, OutputFormat::Png) => {
+                        "Senza perdita: veloce 0–33, normale 34–66, massima 67–100."
+                    }
+                    (true, OutputFormat::Bmp | OutputFormat::Tiff | OutputFormat::Gif) => {
+                        "Qualità fissa. Il file potrebbe diventare più grande."
+                    }
+                    (true, OutputFormat::Jpeg) => "Più qualità, più dettaglio. Trasparenza su bianco.",
+                    (true, OutputFormat::Avif) => {
+                        "Con trasparenza, qualità 100 automatica per il canale alpha."
+                    }
+                    _ => "Più qualità, più dettaglio. Trasparenza conservata.",
+                };
+                ui.label(RichText::new(hint).small().color(theme::MUTED));
+            } else if self.settings.convert_format || self.settings.resize {
+                ui.label(
+                    RichText::new("Solo codifica del formato: PNG non compresso, WebP lossless; JPEG/AVIF a qualità 100, non necessariamente senza perdita. GIF usa una palette limitata.")
+                        .small()
+                        .color(theme::MUTED),
+                );
+            }
         });
         theme::card(ui, "02", "Dimensioni", |ui| {
             ui.checkbox(&mut self.settings.resize, "Ridimensiona immagine");
-            ui.add_enabled_ui(self.settings.resize, |ui| {
+            if self.settings.resize {
                 ui.columns(2, |columns| {
                     for (column, (edge, label)) in columns.iter_mut().zip([
                         (ResizeEdge::Long, "Lato lungo"),
@@ -423,7 +458,7 @@ impl CompressorApp {
                         );
                     });
                 });
-            });
+            }
             ui.label(
                 RichText::new("Proporzioni preservate, senza ingrandimenti.")
                     .small()
@@ -478,7 +513,11 @@ impl CompressorApp {
                     RichText::new(format!(
                         "Esempio: foto{}.{}",
                         self.settings.suffix,
-                        self.settings.format.extension()
+                        if self.settings.convert_format {
+                            self.settings.format.extension()
+                        } else {
+                            "estensione originale"
+                        }
                     ))
                     .small()
                     .color(theme::BLUE),
@@ -885,10 +924,14 @@ impl eframe::App for CompressorApp {
                 ui.horizontal(|ui| {
                     let replaced = self.rows.iter().any(|row| row.replaced);
                     let valid = self.settings.validate().is_ok();
-                    if ui.add_enabled(!blocked && !self.rows.is_empty() && !replaced && valid,
-                        theme::primary("Comprimi immagini")).clicked() {
-                        if self.settings.destination == Destination::Replace { self.confirm_replace = true; }
-                        else { self.start_compression(); }
+                    if self.settings.has_operation() {
+                        if ui.add_enabled(!blocked && !self.rows.is_empty() && !replaced && valid,
+                            theme::primary(self.settings.action_label())).clicked() {
+                            if self.settings.destination == Destination::Replace { self.confirm_replace = true; }
+                            else { self.start_compression(); }
+                        }
+                    } else {
+                        ui.label("Attiva un'operazione nelle impostazioni.");
                     }
                     if self.import_rx.is_some() { ui.spinner(); ui.label("Importazione e anteprime…"); }
                     else if self.dialog_rx.is_some() { ui.label("Selezione file…"); }
@@ -896,7 +939,7 @@ impl eframe::App for CompressorApp {
                     else {
                         ui.vertical(|ui| {
                             ui.label(RichText::new(format!("{} immagini • {}", self.rows.len(), format_bytes(self.rows.iter().map(|row| row.source.bytes).sum()))).strong());
-                            ui.label(RichText::new(format!("Output {} • {}", self.settings.format.label(), if self.settings.resize { "Ridimensionamento attivo" } else { "Dimensioni originali" })).small().color(theme::MUTED));
+                            ui.label(RichText::new(format!("Output {} • {}", self.settings.output_label(), if self.settings.resize { "Ridimensionamento attivo" } else { "Dimensioni originali" })).small().color(theme::MUTED));
                         });
                     }
                 });
@@ -1011,11 +1054,26 @@ mod tests {
 
     #[test]
     fn interface_renders_at_minimum_and_default_sizes() {
-        for size in [Vec2::new(1040.0, 680.0), Vec2::new(1280.0, 860.0)] {
+        for (size, format) in [Vec2::new(1040.0, 680.0), Vec2::new(1280.0, 860.0)]
+            .into_iter()
+            .flat_map(|size| {
+                [
+                    None,
+                    Some(OutputFormat::Jpeg),
+                    Some(OutputFormat::Gif),
+                    Some(OutputFormat::Avif),
+                ]
+                .map(|format| (size, format))
+            })
+        {
             let ctx = egui::Context::default();
             let cc = eframe::CreationContext::_new_kittest(ctx.clone());
             let mut app = CompressorApp::new(&cc, Vec::new());
             app.settings = Settings::default();
+            if let Some(format) = format {
+                app.settings.convert_format = true;
+                app.settings.format = format;
+            }
             let mut frame = eframe::Frame::_new_kittest();
             for _ in 0..3 {
                 let output = ctx.run(
@@ -1034,6 +1092,11 @@ mod tests {
                             "+ Cartella",
                             "Menu di sistema",
                             "Comprimi immagini",
+                            "Comprimi e converti",
+                            "Converti immagini",
+                            "Ridimensiona immagini",
+                            "Comprimi",
+                            "Converti formato",
                         ]
                         .contains(&text.galley.job.text.as_str())
                         {
@@ -1041,6 +1104,58 @@ mod tests {
                                 text.pos.x >= 0.0 && text.pos.x + text.galley.size().x <= size.x
                             );
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn inactive_operation_controls_are_hidden() {
+        for compression in [false, true] {
+            for convert_format in [false, true] {
+                for resize in [false, true] {
+                    let ctx = egui::Context::default();
+                    let cc = eframe::CreationContext::_new_kittest(ctx.clone());
+                    let mut app = CompressorApp::new(&cc, Vec::new());
+                    app.settings = Settings {
+                        compression,
+                        convert_format,
+                        resize,
+                        format: OutputFormat::Avif,
+                        ..Default::default()
+                    };
+                    for _ in 0..3 {
+                        let output = ctx.run(
+                            egui::RawInput {
+                                screen_rect: Some(egui::Rect::from_min_size(
+                                    egui::Pos2::ZERO,
+                                    Vec2::new(360.0, 2000.0),
+                                )),
+                                ..Default::default()
+                            },
+                            |ctx| {
+                                egui::CentralPanel::default().show(ctx, |ui| {
+                                    app.settings_panel(ui);
+                                });
+                            },
+                        );
+                        let labels: Vec<_> = output
+                            .shapes
+                            .into_iter()
+                            .filter_map(|shape| {
+                                if let egui::Shape::Text(text) = shape.shape {
+                                    Some(text.galley.job.text.clone())
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect();
+                        assert_eq!(labels.iter().any(|label| label == "AVIF"), convert_format);
+                        assert_eq!(labels.iter().any(|label| label == "Qualità"), compression);
+                        assert_eq!(labels.iter().any(|label| label == "Lato lungo"), resize);
+                        assert!(labels.iter().any(|label| label == "Comprimi"));
+                        assert!(labels.iter().any(|label| label == "Converti formato"));
                     }
                 }
             }

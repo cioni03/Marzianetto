@@ -60,6 +60,7 @@ fn check_source(source: &Source) -> Result<()> {
 }
 
 pub fn output_path(source: &Source, settings: &Settings) -> Result<PathBuf> {
+    let format = settings.output_format(&source.format)?;
     let parent = source
         .path
         .parent()
@@ -69,13 +70,13 @@ pub fn output_path(source: &Source, settings: &Settings) -> Result<PathBuf> {
     if settings.destination != Destination::Replace {
         name.push(&settings.suffix);
     }
-    name.push(format!(".{}", settings.format.extension()));
+    name.push(format!(".{}", format.extension()));
     match settings.destination {
         Destination::SameFolder => Ok(parent.join(name)),
         Destination::Replace => {
             // Mantiene l'estensione originale, anche .jpeg/.JPG, se il codec non cambia.
-            let same_codec = image::ImageFormat::from_path(&source.path).ok()
-                == Some(image_format(settings.format));
+            let same_codec =
+                image::ImageFormat::from_path(&source.path).ok() == Some(image_format(format));
             Ok(if same_codec {
                 source.path.clone()
             } else {
@@ -109,11 +110,15 @@ fn image_format(format: OutputFormat) -> ImageFormat {
         OutputFormat::Avif => ImageFormat::Avif,
         OutputFormat::Bmp => ImageFormat::Bmp,
         OutputFormat::Tiff => ImageFormat::Tiff,
+        OutputFormat::Gif => ImageFormat::Gif,
     }
 }
 
 pub fn compress(source: &Source, settings: &Settings) -> Result<CompressionResult> {
     settings.validate()?;
+    if !settings.has_operation() {
+        bail!("Attiva almeno un'operazione: compressione, conversione o ridimensionamento.");
+    }
     check_source(source)?;
     if settings.destination == Destination::Replace
         && matches!(source.format.as_str(), "Gif" | "Tiff")
@@ -121,6 +126,7 @@ pub fn compress(source: &Source, settings: &Settings) -> Result<CompressionResul
         bail!("Sostituzione disabilitata per GIF/TIFF: possono contenere più frame o pagine. Usa una copia.");
     }
     let (image, mut metadata) = metadata::decode(&source.path, settings.strip_metadata)?;
+    let format = settings.output_format(&source.format)?;
     let image = resize(image, settings);
     let target = output_path(source, settings)?;
     let parent = target.parent().context("Destinazione non valida")?;
@@ -128,7 +134,7 @@ pub fn compress(source: &Source, settings: &Settings) -> Result<CompressionResul
     // Scrive prima su un file temporaneo nello stesso filesystem. L'originale
     // non viene toccato finché codifica, flush e sync non sono terminati.
     let mut temp = tempfile::NamedTempFile::new_in(parent)?;
-    encode(&image, settings, temp.as_file_mut(), &mut metadata)?;
+    encode(&image, format, settings, temp.as_file_mut(), &mut metadata)?;
     temp.as_file().sync_all()?;
     let output_bytes = temp.as_file().metadata()?.len();
     check_source(source)?;
@@ -166,6 +172,30 @@ pub fn compress(source: &Source, settings: &Settings) -> Result<CompressionResul
         },
         original_retained,
     })
+}
+
+/// Controlla anche alpha a 16 bit senza allocare una seconda immagine.
+fn has_transparency(image: &DynamicImage) -> bool {
+    macro_rules! check {
+        ($buffer:expr, $alpha:expr, $max:expr) => {
+            $buffer.pixels().any(|p| p[$alpha] < $max)
+        };
+    }
+    match image {
+        DynamicImage::ImageLumaA8(buffer) => check!(buffer, 1, u8::MAX),
+        DynamicImage::ImageRgba8(buffer) => check!(buffer, 3, u8::MAX),
+        DynamicImage::ImageLumaA16(buffer) => check!(buffer, 1, u16::MAX),
+        DynamicImage::ImageRgba16(buffer) => check!(buffer, 3, u16::MAX),
+        DynamicImage::ImageRgba32F(buffer) => check!(buffer, 3, 1.0),
+        _ => false,
+    }
+}
+
+fn composite_on_white(pixel: image::Rgba<u8>) -> image::Rgb<u8> {
+    let alpha = pixel[3] as u32;
+    image::Rgb(std::array::from_fn(|i| {
+        ((pixel[i] as u32 * alpha + 255 * (255 - alpha) + 127) / 255) as u8
+    }))
 }
 
 fn resize(image: DynamicImage, settings: &Settings) -> DynamicImage {
@@ -219,23 +249,21 @@ fn persist_unique(mut temp: tempfile::NamedTempFile, target: &Path) -> Result<Pa
 
 fn encode(
     image: &DynamicImage,
+    format: OutputFormat,
     settings: &Settings,
     file: &mut fs::File,
     metadata: &mut Metadata,
 ) -> Result<()> {
     let mut writer = BufWriter::new(file);
-    match settings.format {
+    match format {
         OutputFormat::Jpeg => {
             // JPEG non supporta alpha: composizione su bianco, non su nero.
             let rgba = image.to_rgba8();
             let rgb = image::RgbImage::from_fn(image.width(), image.height(), |x, y| {
-                let p = rgba.get_pixel(x, y).0;
-                let a = p[3] as u32;
-                image::Rgb(std::array::from_fn(|i| {
-                    ((p[i] as u32 * a + 255 * (255 - a) + 127) / 255) as u8
-                }))
+                composite_on_white(*rgba.get_pixel(x, y))
             });
-            let mut encoder = JpegEncoder::new_with_quality(&mut writer, settings.quality.max(1));
+            let mut encoder =
+                JpegEncoder::new_with_quality(&mut writer, settings.encoding_quality().max(1));
             metadata::apply(&mut encoder, metadata);
             encoder.encode(
                 rgb.as_raw(),
@@ -245,33 +273,62 @@ fn encode(
             )?;
         }
         OutputFormat::Png => {
-            let rgba = image.to_rgba8();
-            let compression = match settings.quality {
-                0..=33 => CompressionType::Fast,
-                34..=66 => CompressionType::Default,
-                _ => CompressionType::Best,
+            let compression = if !settings.compression {
+                CompressionType::Uncompressed
+            } else {
+                match settings.quality {
+                    0..=33 => CompressionType::Fast,
+                    34..=66 => CompressionType::Default,
+                    _ => CompressionType::Best,
+                }
             };
-            let mut encoder =
-                PngEncoder::new_with_quality(&mut writer, compression, FilterType::Adaptive);
+            let filter = if settings.compression {
+                FilterType::Adaptive
+            } else {
+                FilterType::NoFilter
+            };
+            let mut encoder = PngEncoder::new_with_quality(&mut writer, compression, filter);
             metadata::apply(&mut encoder, metadata);
+            // PNG conserva anche i livelli di alpha a 16 bit degli originali.
+            let rgba = if matches!(
+                image.color(),
+                image::ColorType::L16
+                    | image::ColorType::La16
+                    | image::ColorType::Rgb16
+                    | image::ColorType::Rgba16
+            ) {
+                DynamicImage::ImageRgba16(image.to_rgba16())
+            } else {
+                DynamicImage::ImageRgba8(image.to_rgba8())
+            };
             encoder.write_image(
-                rgba.as_raw(),
+                rgba.as_bytes(),
                 rgba.width(),
                 rgba.height(),
-                image::ExtendedColorType::Rgba8,
+                rgba.color().into(),
             )?;
         }
         OutputFormat::WebP => {
             metadata::unsupported(metadata);
             let rgba = image.to_rgba8();
-            let encoded = webp::Encoder::from_rgba(rgba.as_raw(), rgba.width(), rgba.height())
-                .encode(settings.quality as f32);
+            let encoder = webp::Encoder::from_rgba(rgba.as_raw(), rgba.width(), rgba.height());
+            let encoded = if settings.compression {
+                encoder.encode(settings.quality as f32)
+            } else {
+                encoder.encode_lossless()
+            };
             writer.write_all(&encoded)?;
         }
         OutputFormat::Avif => {
             let rgba = image.to_rgba8();
-            let mut encoder =
-                AvifEncoder::new_with_speed_quality(&mut writer, 6, settings.quality.max(1));
+            // Questo encoder lega qualità colore e alpha: usa il massimo per
+            // non degradare la trasparenza, senza richiedere scelte all'utente.
+            let quality = if has_transparency(image) {
+                100
+            } else {
+                settings.encoding_quality().max(1)
+            };
+            let mut encoder = AvifEncoder::new_with_speed_quality(&mut writer, 6, quality);
             metadata::apply(&mut encoder, metadata);
             encoder.write_image(
                 rgba.as_raw(),
@@ -282,13 +339,44 @@ fn encode(
         }
         OutputFormat::Bmp => {
             metadata::unsupported(metadata);
-            image.write_to(&mut writer, image_format(settings.format))?;
+            // RGBA forza il contenitore BMP con canale alpha anche per input
+            // in scala di grigi con trasparenza.
+            DynamicImage::ImageRgba8(image.to_rgba8())
+                .write_to(&mut writer, image_format(format))?;
         }
         OutputFormat::Tiff => {
-            let rgba = image.to_rgba8();
+            let rgba = if matches!(
+                image.color(),
+                image::ColorType::L16
+                    | image::ColorType::La16
+                    | image::ColorType::Rgb16
+                    | image::ColorType::Rgba16
+            ) {
+                DynamicImage::ImageRgba16(image.to_rgba16())
+            } else {
+                DynamicImage::ImageRgba8(image.to_rgba8())
+            };
             let mut encoder = image::codecs::tiff::TiffEncoder::new(&mut writer);
             metadata::apply(&mut encoder, metadata);
             encoder.write_image(
+                rgba.as_bytes(),
+                rgba.width(),
+                rgba.height(),
+                rgba.color().into(),
+            )?;
+        }
+        OutputFormat::Gif => {
+            metadata::unsupported(metadata);
+            let mut rgba = image.to_rgba8();
+            // GIF conserva la trasparenza totale. I livelli parziali non
+            // supportati vengono composti su bianco, anche dopo il resize.
+            for pixel in rgba.pixels_mut() {
+                if pixel[3] > 0 && pixel[3] < 255 {
+                    let rgb = composite_on_white(*pixel);
+                    *pixel = image::Rgba([rgb[0], rgb[1], rgb[2], 255]);
+                }
+            }
+            image::codecs::gif::GifEncoder::new(&mut writer).encode(
                 rgba.as_raw(),
                 rgba.width(),
                 rgba.height(),
@@ -363,6 +451,346 @@ mod tests {
         }
     }
 
+    fn alpha_fixture(dir: &Path) -> Source {
+        let mut source = fixture(dir);
+        image::RgbaImage::from_fn(16, 16, |x, y| {
+            image::Rgba([40, 120, 200, (x + y * 16) as u8])
+        })
+        .save(&source.path)
+        .unwrap();
+        let meta = fs::metadata(&source.path).unwrap();
+        source.bytes = meta.len();
+        source.modified = meta.modified().ok();
+        source.dimensions = [16, 16];
+        source
+    }
+
+    #[test]
+    fn conversion_only_ignores_hidden_compression_quality_for_every_codec() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = alpha_fixture(dir.path());
+        for format in OutputFormat::ALL {
+            let mut settings = Settings {
+                compression: false,
+                convert_format: true,
+                quality: 1,
+                destination: Destination::SameFolder,
+                format,
+                ..Default::default()
+            };
+            assert_eq!(settings.action_label(), "Converti immagini");
+            let low = compress(&source, &settings).unwrap();
+            settings.quality = 100;
+            let high = compress(&source, &settings).unwrap();
+            assert_eq!(
+                fs::read(low.path).unwrap(),
+                fs::read(high.path).unwrap(),
+                "Il cursore nascosto non deve influire sulla conversione {format:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn conversion_only_webp_is_lossless_and_preserves_alpha() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = alpha_fixture(dir.path());
+        let settings = Settings {
+            compression: false,
+            convert_format: true,
+            format: OutputFormat::WebP,
+            quality: 1,
+            destination: Destination::SameFolder,
+            ..Default::default()
+        };
+        let result = compress(&source, &settings).unwrap();
+        let original = image::open(&source.path).unwrap().to_rgba8();
+        let output = image::open(&result.path).unwrap().to_rgba8();
+        for (input, output) in original.pixels().zip(output.pixels()) {
+            assert_eq!(input[3], output[3]);
+            if input[3] != 0 {
+                assert_eq!(input, output);
+            }
+        }
+    }
+
+    #[test]
+    fn conversion_only_png_disables_compression_without_changing_pixels() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = fixture(dir.path());
+        let mut settings = Settings {
+            compression: false,
+            convert_format: true,
+            format: OutputFormat::Png,
+            destination: Destination::SameFolder,
+            ..Default::default()
+        };
+        let uncompressed = compress(&source, &settings).unwrap();
+        settings.compression = true;
+        let compressed = compress(&source, &settings).unwrap();
+        assert!(uncompressed.output_bytes > compressed.output_bytes);
+        assert_eq!(
+            image::open(uncompressed.path).unwrap().to_rgba8(),
+            image::open(compressed.path).unwrap().to_rgba8()
+        );
+    }
+
+    #[test]
+    fn disabled_operations_do_not_write_and_resize_only_still_works() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = fixture(dir.path());
+        let mut settings = Settings {
+            compression: false,
+            convert_format: false,
+            destination: Destination::SameFolder,
+            ..Default::default()
+        };
+        assert!(compress(&source, &settings).is_err());
+        assert!(!output_path(&source, &settings).unwrap().exists());
+        settings.resize = true;
+        settings.long_edge = 16;
+        let output = compress(&source, &settings).unwrap();
+        assert_eq!(image::image_dimensions(output.path).unwrap(), (16, 8));
+        assert!(source.path.exists());
+    }
+
+    #[test]
+    fn optional_conversion_preserves_each_original_format() {
+        let dir = tempfile::tempdir().unwrap();
+        for format in OutputFormat::ALL {
+            // AVIF è solo in uscita.
+            if format == OutputFormat::Avif {
+                continue;
+            }
+            let path = dir.path().join(format!("input.{}", format.extension()));
+            DynamicImage::new_rgb8(8, 4).save(&path).unwrap();
+            let meta = fs::metadata(&path).unwrap();
+            let source = Source {
+                path,
+                root: dir.path().to_owned(),
+                bytes: meta.len(),
+                modified: meta.modified().ok(),
+                format: format!("{format:?}"),
+                dimensions: [8, 4],
+            };
+            let settings = Settings {
+                destination: Destination::SameFolder,
+                // Ignorato se l'utente non sceglie di convertire.
+                format: OutputFormat::WebP,
+                ..Default::default()
+            };
+            let result = compress(&source, &settings).unwrap();
+            assert_eq!(
+                image::ImageReader::open(&result.path).unwrap().format(),
+                Some(image_format(format))
+            );
+            assert!(source.path.exists());
+        }
+    }
+
+    #[test]
+    fn conversion_preserves_all_eight_bit_alpha_levels() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = alpha_fixture(dir.path());
+        let expected = image::open(&source.path).unwrap().to_rgba8();
+        for format in [
+            OutputFormat::Png,
+            OutputFormat::WebP,
+            OutputFormat::Bmp,
+            OutputFormat::Tiff,
+        ] {
+            let settings = Settings {
+                destination: Destination::SameFolder,
+                convert_format: true,
+                format,
+                ..Default::default()
+            };
+            let result = compress(&source, &settings).unwrap();
+            let output = image::open(&result.path).unwrap().to_rgba8();
+            assert_eq!(output.dimensions(), expected.dimensions());
+            for (input, output) in expected.pixels().zip(output.pixels()) {
+                assert_eq!(input[3], output[3], "Alpha non conservato in {format:?}");
+            }
+            assert!(result.warning.is_none());
+        }
+    }
+
+    #[test]
+    fn png_and_tiff_keep_sixteen_bit_alpha() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut source = fixture(dir.path());
+        let original = image::ImageBuffer::from_fn(4, 1, |x, _| {
+            image::Rgba([1000_u16, 2000, 3000, [0, 1, 32768, 65534][x as usize]])
+        });
+        DynamicImage::ImageRgba16(original.clone())
+            .save(&source.path)
+            .unwrap();
+        let meta = fs::metadata(&source.path).unwrap();
+        source.bytes = meta.len();
+        source.modified = meta.modified().ok();
+        for format in [OutputFormat::Png, OutputFormat::Tiff] {
+            let settings = Settings {
+                destination: Destination::SameFolder,
+                convert_format: true,
+                format,
+                ..Default::default()
+            };
+            let result = compress(&source, &settings).unwrap();
+            let output = image::open(result.path).unwrap();
+            assert_eq!(output.color(), image::ColorType::Rgba16);
+            assert_eq!(output.to_rgba16(), original);
+        }
+    }
+
+    #[test]
+    fn transparent_images_convert_immediately_to_jpeg_and_gif() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = alpha_fixture(dir.path());
+        let original = fs::read(&source.path).unwrap();
+        for format in [OutputFormat::Jpeg, OutputFormat::Gif] {
+            let settings = Settings {
+                destination: Destination::SameFolder,
+                convert_format: true,
+                format,
+                ..Default::default()
+            };
+            let result = compress(&source, &settings).unwrap();
+            assert!(result.path.exists());
+            assert!(result.warning.is_none());
+            assert_eq!(fs::read(&source.path).unwrap(), original);
+        }
+    }
+
+    #[test]
+    fn transparency_detection_checks_actual_alpha_at_native_precision() {
+        let barely_transparent = DynamicImage::ImageRgba16(image::ImageBuffer::from_pixel(
+            1,
+            1,
+            image::Rgba([0, 0, 0, 65534]),
+        ));
+        assert!(has_transparency(&barely_transparent));
+        let opaque = DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+            1,
+            1,
+            image::Rgba([40, 120, 200, 255]),
+        ));
+        assert!(!has_transparency(&opaque));
+        let grayscale = DynamicImage::ImageLumaA8(image::ImageBuffer::from_pixel(
+            1,
+            1,
+            image::LumaA([100, 128]),
+        ));
+        assert!(has_transparency(&grayscale));
+    }
+
+    #[test]
+    fn jpeg_automatically_composites_transparency_on_white() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = fixture(dir.path());
+        let settings = Settings {
+            destination: Destination::SameFolder,
+            convert_format: true,
+            format: OutputFormat::Jpeg,
+            quality: 100,
+            ..Default::default()
+        };
+        let result = compress(&source, &settings).unwrap();
+        assert!(result.warning.is_none());
+        let output = image::open(result.path).unwrap().to_rgb8();
+        let pixel = output.get_pixel(0, 0);
+        assert!(pixel[0] >= 250);
+        assert!((pixel[1] as i32 - 127).abs() <= 3);
+        assert!((pixel[2] as i32 - 127).abs() <= 3);
+        assert!(source.path.exists());
+    }
+
+    #[test]
+    fn jpeg_fully_transparent_pixels_become_white() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut source = fixture(dir.path());
+        image::RgbaImage::from_pixel(8, 4, image::Rgba([0, 0, 0, 0]))
+            .save(&source.path)
+            .unwrap();
+        let meta = fs::metadata(&source.path).unwrap();
+        source.bytes = meta.len();
+        source.modified = meta.modified().ok();
+        let settings = Settings {
+            destination: Destination::SameFolder,
+            convert_format: true,
+            format: OutputFormat::Jpeg,
+            quality: 100,
+            ..Default::default()
+        };
+        let result = compress(&source, &settings).unwrap();
+        let output = image::open(result.path).unwrap().to_rgb8();
+        assert!(output.pixels().all(|p| p.0.iter().all(|&c| c >= 254)));
+        assert!(result.warning.is_none());
+    }
+
+    #[test]
+    fn gif_automatically_composites_partial_alpha_on_white() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = alpha_fixture(dir.path());
+        let original = image::open(&source.path).unwrap().to_rgba8();
+        let settings = Settings {
+            destination: Destination::SameFolder,
+            convert_format: true,
+            format: OutputFormat::Gif,
+            ..Default::default()
+        };
+        let result = compress(&source, &settings).unwrap();
+        let output = image::open(result.path).unwrap().to_rgba8();
+        for (input, output) in original.pixels().zip(output.pixels()) {
+            if input[3] == 0 {
+                assert_eq!(output[3], 0);
+            } else {
+                assert_eq!(output[3], 255);
+                assert_eq!(output.0[..3], composite_on_white(*input).0);
+            }
+        }
+        assert!(result.warning.is_none());
+    }
+
+    #[test]
+    fn gif_preserves_binary_transparency() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut source = fixture(dir.path());
+        image::RgbaImage::from_fn(8, 4, |x, _| {
+            image::Rgba([40, 120, 200, if x < 4 { 0 } else { 255 }])
+        })
+        .save(&source.path)
+        .unwrap();
+        let meta = fs::metadata(&source.path).unwrap();
+        source.bytes = meta.len();
+        source.modified = meta.modified().ok();
+        let settings = Settings {
+            destination: Destination::SameFolder,
+            convert_format: true,
+            format: OutputFormat::Gif,
+            ..Default::default()
+        };
+        let result = compress(&source, &settings).unwrap();
+        let output = image::open(result.path).unwrap().to_rgba8();
+        for (x, _, pixel) in output.enumerate_pixels() {
+            assert_eq!(pixel[3], if x < 4 { 0 } else { 255 });
+        }
+        assert!(result.warning.is_none());
+    }
+
+    #[test]
+    fn transparent_avif_converts_automatically() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = alpha_fixture(dir.path());
+        let settings = Settings {
+            destination: Destination::SameFolder,
+            convert_format: true,
+            format: OutputFormat::Avif,
+            ..Default::default()
+        };
+        let result = compress(&source, &settings).unwrap();
+        assert!(result.output_bytes > 0);
+        assert!(result.warning.is_none());
+    }
+
     #[test]
     fn preserves_relative_structure() {
         let dir = tempfile::tempdir().unwrap();
@@ -372,7 +800,7 @@ mod tests {
         let settings = Settings::default();
         assert_eq!(
             output_path(&source, &settings).unwrap(),
-            PathBuf::from("/photos_compressed/holiday/a_compressed.jpg")
+            PathBuf::from("/photos_compressed/holiday/a_compressed.png")
         );
     }
 
@@ -401,6 +829,7 @@ mod tests {
         for format in OutputFormat::ALL {
             let settings = Settings {
                 destination: Destination::SameFolder,
+                convert_format: true,
                 format,
                 ..Default::default()
             };
@@ -425,6 +854,8 @@ mod tests {
         fs::write(&occupied, b"keep me").unwrap();
         let settings = Settings {
             destination: Destination::Replace,
+            convert_format: true,
+            format: OutputFormat::Jpeg,
             ..Default::default()
         };
         let result = compress(&source, &settings).unwrap();

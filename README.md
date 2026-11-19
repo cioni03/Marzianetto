@@ -6,6 +6,27 @@
 
 <p align="center">A simple desktop app for compressing and resizing images.</p>
 
+<p align="center">
+  <a href="https://cioni03.github.io/Marzianetto/">
+    <img src="https://img.shields.io/badge/Website-Visit%20Site-2ea44f?style=for-the-badge&logo=google-chrome&logoColor=white" alt="Website">
+  </a>
+  <a href="https://github.com/cioni03/Marzianetto/releases/latest">
+    <img src="https://img.shields.io/github/v/release/cioni03/Marzianetto?style=for-the-badge&label=Latest%20Release&color=blue" alt="Latest Release">
+  </a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/cioni03/Marzianetto/releases/latest/download/marzianetto-x86_64-pc-windows-msvc.zip">
+    <img src="https://img.shields.io/badge/Windows-Download%20(.zip)-0078D6?style=flat-square&logo=windows&logoColor=white" alt="Download for Windows">
+  </a>
+  <a href="https://github.com/cioni03/Marzianetto/releases/latest/download/marzianetto-aarch64-apple-darwin.dmg">
+    <img src="https://img.shields.io/badge/macOS-Download%20(.dmg)-000000?style=flat-square&logo=apple&logoColor=white" alt="Download for macOS">
+  </a>
+  <a href="https://github.com/cioni03/Marzianetto/releases/latest/download/marzianetto-linux-x86_64.AppImage">
+    <img src="https://img.shields.io/badge/Linux-Download%20(.AppImage)-FCC624?style=flat-square&logo=linux&logoColor=black" alt="Download for Linux">
+  </a>
+</p>
+
 ## What it does
 
 - Add images or folders by browsing or dragging and dropping them into the app.

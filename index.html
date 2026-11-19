@@ -6,6 +6,7 @@
   <meta name="theme-color" content="#10142b">
   <meta name="description" content="Make images lighter, switch formats, or resize whole folders with Marzianetto. Free for Mac, Windows and Linux.">
   <title>Marzianetto — Less weight. More space.</title>
+  <script defer src="https://analytics.simoned.it/script.js" data-website-id="8dffc1ea-8aaf-4c1a-8cd7-37388d8b7e8c"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
@@ -128,8 +129,12 @@
       padding: .25rem .44rem; min-height: 33px; border: 1px solid #6a6289; border-radius: 4px;
       color: var(--paper); background: #221f3a; font: 700 .68rem/1.15 var(--mono);
     }
-    footer { border-top: 1px solid var(--rule); padding-block: .75rem; color: var(--muted); font-size: .79rem; }
+    footer { display: grid; grid-template-columns: 1fr auto 1fr; border-top: 1px solid var(--rule); padding-block: .75rem; color: var(--muted); font-size: .79rem; }
     .platforms { display: flex; flex-wrap: wrap; gap: .25rem .65rem; }
+    .credit { display: flex; align-items: center; gap: .28em; white-space: nowrap; }
+    .credit svg { width: .9em; height: .9em; fill: #fff; }
+    .credit a { font-weight: 700; color: var(--paper); }
+    .github { justify-self: end; }
     footer strong { color: var(--paper); }
     footer a { text-decoration: none; white-space: nowrap; }
     footer a:hover { text-decoration: underline; text-underline-offset: .2em; }
@@ -181,6 +186,10 @@
       h1 { font-size: clamp(2.35rem, 10.5vw, 4.25rem); }
       .scene { height: clamp(145px, 25svh, 190px); }
       .panels { min-height: 123px; }
+    }
+    @media (max-width: 490px) {
+      footer { grid-template-columns: 1fr auto; gap: .25rem .5rem; }
+      .credit { grid-column: 1 / -1; grid-row: 2; justify-self: center; }
     }
     @media (max-width: 350px) {
       .page { width: calc(100% - 20px); }
@@ -329,7 +338,12 @@
     </main>
     <footer>
       <div class="platforms"><strong>Free for</strong><span>macOS</span><span>Windows</span><span>Linux</span></div>
-      <a href="https://github.com/cioni03/Marzianetto">View on GitHub ↗</a>
+      <div class="credit">
+        Made with
+        <svg viewBox="0 0 16 16" role="img" aria-label="love"><path d="M8 14S1 9.6 1 5.5A3.5 3.5 0 0 1 8 4a3.5 3.5 0 0 1 7 1.5C15 9.6 8 14 8 14Z"/></svg>
+        by <a href="https://glitchflowerstudio.pages.dev">glitchflowerstudio</a>
+      </div>
+      <a class="github" href="https://github.com/cioni03/Marzianetto">View on GitHub ↗</a>
     </footer>
   </div>
   <dialog id="downloads" aria-labelledby="downloads-title">

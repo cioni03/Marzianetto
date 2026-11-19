@@ -1,0 +1,463 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#10142b">
+  <meta name="description" content="Make images lighter, switch formats, or resize whole folders with Marzianetto. Free for Mac, Windows and Linux.">
+  <title>Marzianetto — Less weight. More space.</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      color-scheme: dark;
+      --night: #10142b;
+      --ink: #12172d;
+      --paper: #fff3df;
+      --muted: #c1c5dd;
+      --pink: #ff6394;
+      --mint: #90f4c6;
+      --sky: #71d7f4;
+      --sun: #ffdb72;
+      --rule: #3c405e;
+      --accent: var(--pink);
+      --mono: "Space Mono", ui-monospace, monospace;
+      font-family: "Space Grotesk", system-ui, sans-serif;
+    }
+    *, *::before, *::after { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    body {
+      margin: 0; color: var(--paper); background: var(--night);
+      background-image: radial-gradient(ellipse at 50% 55%, #30254f 0, #171a35 42%, transparent 68%),
+                        radial-gradient(#585e801c 1px, transparent 1px);
+      background-size: 100% 100%, 24px 24px;
+    }
+    button, input { font: inherit; }
+    button { cursor: pointer; }
+    a { color: inherit; }
+    :focus-visible { outline: 2px solid var(--sun); outline-offset: 5px; }
+    .page { min-height: 100svh; width: min(100% - 56px, 1280px); margin: auto; display: grid; grid-template-rows: auto 1fr auto; }
+    header, footer { display: flex; align-items: center; justify-content: space-between; gap: .75rem; }
+    header { padding: 1rem 0; }
+    .wordmark { display: inline-flex; align-items: center; gap: .55rem; text-decoration: none; font-weight: 700; letter-spacing: -.06em; font-size: 1.3rem; }
+    .wordmark svg { width: 32px; height: 32px; }
+    .download {
+      display: inline-flex; align-items: center; gap: .55rem; min-height: 42px; padding: .55rem .95rem;
+      border: 1px solid #ff9bbb; border-radius: 5px; background: var(--pink); color: var(--ink);
+      box-shadow: 3px 3px 0 #7c335b; font-weight: 700; font-size: .88rem; text-decoration: none; white-space: nowrap;
+      transition: transform .2s, box-shadow .2s;
+    }
+    .download:hover { transform: translate(-2px, -2px); box-shadow: 5px 5px 0 #7c335b; }
+    .download:active { transform: translate(2px, 2px); box-shadow: 1px 1px 0 #7c335b; }
+    .download svg { width: 15px; height: 15px; }
+    main { align-self: center; padding: .55rem 0 1rem; }
+    .hero { text-align: center; }
+    .label { font: 700 .64rem/1.4 var(--mono); letter-spacing: .09em; text-transform: uppercase; }
+    .hero .label { color: var(--mint); margin: 0 0 .48rem; }
+    .hero .label::before, .hero .label::after { content: "✦"; color: var(--pink); margin-inline: .5rem; }
+    h1 { margin: 0; font-size: clamp(3rem, 7.7vw, 7.15rem); line-height: .91; letter-spacing: -.092em; }
+    h1 span { color: var(--pink); }
+    .intro { max-width: 55ch; margin: .86rem auto .35rem; color: var(--muted); font-size: clamp(.88rem, 1.45vw, 1.12rem); line-height: 1.46; }
+    .playground[data-mode="convert"] { --accent: var(--sky); }
+    .playground[data-mode="resize"] { --accent: var(--sun); }
+    .playground[data-mode="extras"] { --accent: var(--mint); }
+    .scene {
+      position: relative; display: grid; place-items: center; height: clamp(205px, 36vh, 360px);
+      width: min(100%, 880px); margin: 0 auto; isolation: isolate;
+    }
+    .sky-drawing { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; z-index: -1; }
+    .orbit { fill: none; stroke: #a996cf60; stroke-width: 1; stroke-dasharray: 2 6; vector-effect: non-scaling-stroke; }
+    .sky-drawing .star { fill: var(--accent); transition: fill .3s; }
+    .moon { fill: #5b4d7e; }
+    .mascot {
+      position: absolute; z-index: 3; width: clamp(68px, 14%, 124px); aspect-ratio: 1; right: 19%; top: 12%;
+      filter: drop-shadow(5px 9px 0 #0a0d22a8); transform: rotate(10deg);
+      animation: bob 5s ease-in-out infinite;
+    }
+    @keyframes bob { 50% { transform: translateY(-8px) rotate(6deg); } }
+    .postcard-stack { position: relative; width: clamp(178px, 40%, 318px); }
+    .postcard-stack::before {
+      content: ""; position: absolute; inset: 5% -3% -3% 1%; transform: rotate(11deg);
+      border: 2px solid #efaaca; border-radius: 4px; background: #a64f84;
+      box-shadow: 6px 8px 0 #070a1b70;
+    }
+    .postcard {
+      --size: 1; --soft: 0px;
+      position: relative; display: block; margin: 0; padding: 7px 7px 0; transform: rotate(-8deg) scale(var(--size));
+      background: var(--paper); color: var(--ink); border-radius: 4px; box-shadow: 6px 8px 0 #070a1b98;
+      transition: transform .33s cubic-bezier(.19,.76,.35,1.18);
+    }
+    .stamp { display: block; background: #fff; overflow: hidden; }
+    .stamp svg { display: block; width: 100%; height: auto; filter: blur(var(--soft)); }
+    .stamp .photo-sky { transition: opacity .25s; }
+    [data-mode="convert"] .stamp { background: repeating-conic-gradient(#bac5dc 0 25%, #eff0f9 0 50%) 0 0 / 16px 16px; }
+    [data-mode="convert"] .photo-sky { opacity: 0; }
+    [data-mode="convert"][data-format="JPG"] .stamp { background: white; }
+    figcaption {
+      display: flex; justify-content: space-between; gap: .35rem; padding: .38rem .12rem;
+      font: 700 clamp(.54rem, 1.1vw, .71rem)/1.2 var(--mono); white-space: nowrap;
+    }
+    figcaption span:last-child { color: #65435b; }
+    .badge {
+      position: absolute; z-index: 4; min-width: 8ch; padding: .38rem .62rem; border: 1px solid currentColor; border-radius: 3px;
+      color: var(--ink); background: var(--accent); box-shadow: 4px 4px 0 #0b0e24;
+      font: 700 clamp(.59rem, 1.35vw, .98rem)/1.2 var(--mono); white-space: nowrap;
+    }
+    .badge.original { left: 16%; top: 29%; transform: rotate(-8deg); color: var(--paper); background: #282441; border-color: #8b7da8; }
+    .badge.result { right: 14%; bottom: 17%; transform: rotate(7deg); }
+    .tabs { display: flex; flex-wrap: wrap; justify-content: center; gap: .44rem; margin: 0 auto; }
+    .tabs button {
+      padding: .49rem .76rem; min-height: 40px; border: 1px solid #6a6289; background: #151930;
+      color: var(--paper); border-radius: 5px; font-size: .87rem; font-weight: 700;
+    }
+    .tabs button:hover, .choice:hover { border-color: var(--accent); }
+    .tabs button[aria-selected="true"], .choice[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--ink); }
+    .tabs b { font: 400 .67em var(--mono); margin-right: .3rem; opacity: .82; }
+    .panels { width: min(100%, 930px); min-height: 122px; margin: .73rem auto 0; border-top: 1px solid var(--rule); }
+    .panel { display: grid; grid-template-columns: 1.11fr 1fr; align-items: start; gap: 1rem 1.38rem; padding: .75rem .1rem .05rem; }
+    .panel h2 { margin: 0 0 .24rem; font-size: clamp(1.12rem, 2.6vw, 1.59rem); letter-spacing: -.05em; line-height: 1.13; }
+    .panel p { margin: 0; color: var(--muted); line-height: 1.38; font-size: clamp(.78rem, 1.35vw, .92rem); }
+    .controls { align-self: center; }
+    .controls .label { color: var(--accent); }
+    .slider { display: grid; grid-template-columns: auto minmax(30px, 1fr) auto; gap: .56rem; align-items: center; }
+    .slider output { min-width: 4ch; text-align: right; color: var(--paper); white-space: nowrap; }
+    input[type="range"] { width: 100%; height: 31px; margin: 0; accent-color: var(--accent); cursor: ew-resize; }
+    .choices { display: flex; flex-wrap: wrap; gap: .3rem; margin-bottom: .32rem; }
+    .choice {
+      padding: .25rem .44rem; min-height: 33px; border: 1px solid #6a6289; border-radius: 4px;
+      color: var(--paper); background: #221f3a; font: 700 .68rem/1.15 var(--mono);
+    }
+    footer { border-top: 1px solid var(--rule); padding-block: .75rem; color: var(--muted); font-size: .79rem; }
+    .platforms { display: flex; flex-wrap: wrap; gap: .25rem .65rem; }
+    footer strong { color: var(--paper); }
+    footer a { text-decoration: none; white-space: nowrap; }
+    footer a:hover { text-decoration: underline; text-underline-offset: .2em; }
+    dialog {
+      width: min(440px, 100% - 28px); max-height: 88dvh; padding: 1.15rem;
+      color: var(--paper); background: #211c39; border: 1px solid #a584b7;
+      border-radius: 10px; box-shadow: 5px 5px 0 var(--pink);
+    }
+    dialog::backdrop { background: #070a1bd9; backdrop-filter: blur(4px); }
+    .dialog-head { display: flex; justify-content: space-between; align-items: center; gap: .5rem; }
+    .dialog-head h2 { margin: 0; font-size: 1.44rem; letter-spacing: -.05em; }
+    dialog p { color: var(--muted); line-height: 1.35; }
+    .close { width: 42px; height: 42px; border: 1px solid #776689; border-radius: 5px; background: transparent; color: var(--paper); font-size: 1.35rem; }
+    .download-links { display: grid; gap: .48rem; }
+    .download-links a { display: flex; justify-content: space-between; gap: .5rem; padding: .64rem; border: 1px solid #6b5b7f; border-radius: 5px; text-decoration: none; }
+    .download-links a:hover { border-color: var(--pink); background: #402845; }
+    .download-links small { color: var(--mint); }
+    @media (min-width: 701px) and (max-height: 780px) {
+      h1 { font-size: clamp(2.95rem, 6.8vw, 6.4rem); }
+      .scene { height: clamp(190px, 32vh, 260px); }
+      .postcard-stack { width: clamp(178px, 39%, 278px); }
+      .panels { min-height: 111px; }
+    }
+    @media (max-width: 700px) {
+      .page { width: min(100% - 28px, 570px); }
+      header { padding: .58rem 0; }
+      .wordmark { font-size: 1.13rem; }
+      .wordmark svg { width: 24px; height: 24px; }
+      .download { min-height: 37px; padding: .44rem .59rem; font-size: .78rem; }
+      .download svg { width: 13px; height: 13px; }
+      main { padding: .35rem 0 .65rem; }
+      h1 { font-size: clamp(2.53rem, 12vw, 5.3rem); }
+      h1 span { display: block; }
+      .intro { max-width: 39ch; margin: .56rem auto .15rem; }
+      .scene { height: clamp(155px, 28svh, 246px); }
+      .postcard-stack { width: clamp(152px, 49%, 240px); }
+      .mascot { width: clamp(55px, 17%, 93px); right: 13%; top: 13%; }
+      .badge.original { left: 4%; top: 23%; }
+      .badge.result { right: 3%; bottom: 16%; }
+      .tabs { gap: .3rem; }
+      .tabs button { min-height: 37px; padding: .38rem .49rem; font-size: .75rem; }
+      .tabs b { display: none; }
+      .panels { min-height: 140px; margin: .5rem auto 0; }
+      .panel { grid-template-columns: 1fr; gap: .44rem; padding-top: .43rem; }
+      footer { font-size: .68rem; padding-block: .45rem; }
+      .platforms { gap: .2rem .42rem; }
+    }
+    @media (max-width: 430px) and (max-height: 710px) {
+      h1 { font-size: clamp(2.35rem, 10.5vw, 4.25rem); }
+      .scene { height: clamp(145px, 25svh, 190px); }
+      .panels { min-height: 123px; }
+    }
+    @media (max-width: 350px) {
+      .page { width: calc(100% - 20px); }
+      .tabs button { padding-inline: .35rem; font-size: .69rem; }
+      .badge { padding-inline: .37rem; }
+      .badge.original { left: 1%; }
+      .badge.result { right: 1%; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation: none !important; transition: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <svg width="0" height="0" aria-hidden="true" style="position:absolute">
+    <symbol id="alien" viewBox="0 0 36 36">
+      <g shape-rendering="crispEdges">
+        <path fill="#ff6394" d="M8 4h5v5h10V4h5v6h-2v2h4v4h3v7h-5v-3h-2v5H23v-3H13v4H8v-4H4v2H1v-5h4v-4h3v-3h3v-2H8zM9 25h6v4h-2v3H7v-5h2z"/>
+        <path fill="#f14c84" d="M9 16h3v4H9zm16-2h4v5h-4zM9 26h3v3H9z"/>
+        <path fill="#ff8bb0" d="M13 10h10v2H13zm-4-6h2v1H9zm4 22h3v2h-3z"/>
+        <path fill="#15182f" d="M12 13h3v5h-3zm9 0h3v5h-3z"/>
+        <path fill="#fff3df" d="M18 20h13v13H18z"/>
+        <path fill="#55c8eb" d="M19 21h11v9H19z"/>
+        <path fill="#ffdb72" d="M26 22h2v2h-2z"/>
+        <path fill="#21a787" d="M19 27h2v-2h3v2h2v-1h4v4H19z"/>
+        <path fill="#ff6394" d="M28 24h5v2h-1v3h-4v-2h-1v-2h1z"/>
+      </g>
+    </symbol>
+    <symbol id="spark" viewBox="0 0 16 16"><path d="M6 0h4v6h6v4h-6v6H6v-6H0V6h6z"/></symbol>
+  </svg>
+  <div class="page">
+    <header>
+      <a class="wordmark" href="./"><svg aria-hidden="true"><use href="#alien"/></svg>marzianetto</a>
+      <a class="download" id="download" href="https://github.com/cioni03/Marzianetto/releases/latest">
+        Free download
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5"/></svg>
+      </a>
+    </header>
+    <main>
+      <section class="hero" aria-labelledby="title">
+        <p class="label">A tiny alien for your images</p>
+        <h1 id="title">Less weight. <span>More space.</span></h1>
+        <p class="intro">Compress, convert, or resize a single image or a whole folder. No uploads. Just you, your pictures, and a little pixel alien.</p>
+      </section>
+      <section class="playground" id="playground" data-mode="compress" data-format="WebP" aria-label="Interactive image playground">
+        <div class="scene">
+          <svg class="sky-drawing" viewBox="0 0 840 320" preserveAspectRatio="none" aria-hidden="true">
+            <ellipse class="orbit" cx="420" cy="163" rx="355" ry="94" transform="rotate(-10 420 163)"/>
+            <ellipse class="orbit" cx="420" cy="165" rx="290" ry="85" transform="rotate(13 420 165)" opacity=".52"/>
+            <path class="moon" d="M135 147h22v6h6v21h-6v6h-22v-6h-7v-21h7z"/>
+            <path fill="#a283ad" d="M138 149h13v4h-13zm-5 5h4v13h-4z"/>
+            <path fill="#a181ae" d="M680 99h8v8h-8zM212 240h5v5h-5zM715 234h5v5h-5z"/>
+            <use href="#spark" class="star" x="203" y="64" width="18" height="18"/>
+            <use href="#spark" fill="#ffdb72" x="687" y="185" width="22" height="22"/>
+            <use href="#spark" fill="#90f4c6" x="75" y="213" width="11" height="11"/>
+            <use href="#spark" fill="#fff3df" x="565" y="268" width="9" height="9"/>
+            <use href="#spark" class="star" x="753" y="113" width="11" height="11"/>
+            <path fill="#fff3df" d="M170 111h3v3h-3zM653 249h3v3h-3zM110 240h3v3h-3zM726 89h3v3h-3zM265 66h4v4h-4zM577 51h3v3h-3z"/>
+          </svg>
+          <svg class="mascot" aria-hidden="true"><use href="#alien"/></svg>
+          <div class="postcard-stack" aria-hidden="true">
+            <figure class="postcard" id="postcard">
+              <div class="stamp">
+                <svg viewBox="0 0 78 45" shape-rendering="crispEdges">
+                  <g class="photo-sky">
+                    <path fill="#625691" d="M0 0h78v45H0z"/>
+                    <path fill="#8677ab" d="M0 12h78v33H0z"/>
+                    <path fill="#e196ae" d="M0 20h78v25H0z"/>
+                    <path fill="#ffdb72" d="M50 5h13v2h3v3h2v11h-2v3h-3v2H50v-2h-3v-3h-2V10h2V7h3z"/>
+                    <path fill="#f78d79" d="M47 17h19v2H47zm-2 4h23v2H45zm5 4h13v1H50z"/>
+                    <path fill="#fff0c8" d="M8 7h2v2H8zm15 5h3v2h-3zm11-7h2v2h-2zm37 8h3v1h-3zM6 17h10v2H6z"/>
+                  </g>
+                  <path fill="#a74c83" d="M0 30h7v-3h5v-3h6v-5h4v-5h5v5h4v5h5v3h7v3h6v-3h7v-3h7v-4h5v-4h4v4h3v3h3v22H0z"/>
+                  <path fill="#fa719c" d="M12 24h6v-5h4v-5h5v5h4v5h-4v-3h-4v3h-5v2h-6zm54-1v-4h2v-3h4v4h3v3h-3v-3h-4v3z"/>
+                  <path fill="#46bca8" d="M0 31h10v3h16v3h15v-2h9v-5h10v-2h18v17H0z"/>
+                  <path fill="#218e8b" d="M0 37h12v3h15v3h18v-3h11v-4h12v-3h10v12H0z"/>
+                  <path fill="#ffe0a4" d="M9 36h2v1H9zm18 4h3v1h-3zm27-7h2v1h-2zm13-2h2v1h-2z"/>
+                  <path fill="#155d73" d="M0 42h17v3H0zm53 1h13v-2h12v4H53z"/>
+                </svg>
+              </div>
+              <figcaption><span>orbit<span id="extension">.jpg</span></span><span id="image-note">0.83 MB</span></figcaption>
+            </figure>
+          </div>
+          <span class="badge original" id="original">2.40 MB before</span>
+          <span class="badge result" id="result">65% lighter</span>
+        </div>
+        <div class="tabs" role="tablist" aria-label="Try a feature">
+          <button type="button" id="tab-compress" role="tab" aria-selected="true" aria-controls="compress" data-mode="compress"><b aria-hidden="true">01</b> Compress</button>
+          <button type="button" id="tab-convert" role="tab" aria-selected="false" aria-controls="convert" tabindex="-1" data-mode="convert"><b aria-hidden="true">02</b> Convert</button>
+          <button type="button" id="tab-resize" role="tab" aria-selected="false" aria-controls="resize" tabindex="-1" data-mode="resize"><b aria-hidden="true">03</b> Resize</button>
+          <button type="button" id="tab-extras" role="tab" aria-selected="false" aria-controls="extras" tabindex="-1" data-mode="extras"><b aria-hidden="true">04</b> Explore</button>
+        </div>
+        <div class="panels">
+          <section class="panel" id="compress" role="tabpanel" aria-labelledby="tab-compress">
+            <div>
+              <h2>Make room for more shots.</h2>
+              <p>Choose how much detail to keep and compare sizes before and after. Keep the original format or change it at the same time.</p>
+            </div>
+            <div class="controls">
+              <div class="slider"><label class="label" for="quality">Quality</label><input type="range" id="quality" min="10" max="100" value="70"><output class="label" id="quality-value" for="quality">70%</output></div>
+              <p>Try the slider. This sample shows an illustrative result.</p>
+            </div>
+          </section>
+          <section class="panel" id="convert" role="tabpanel" aria-labelledby="tab-convert" hidden>
+            <div>
+              <h2>Give your image a new format.</h2>
+              <p>Convert with or without extra compression. Marzianetto keeps transparency wherever the format allows it.</p>
+            </div>
+            <div class="controls">
+              <div id="formats" class="choices" role="group" aria-label="File format">
+                <button class="choice" type="button" data-value="JPG" aria-pressed="false">JPG</button>
+                <button class="choice" type="button" data-value="PNG" aria-pressed="false">PNG</button>
+                <button class="choice" type="button" data-value="WebP" aria-pressed="true">WebP</button>
+                <button class="choice" type="button" data-value="AVIF" aria-pressed="false">AVIF</button>
+                <button class="choice" type="button" data-value="BMP" aria-pressed="false">BMP</button>
+                <button class="choice" type="button" data-value="TIFF" aria-pressed="false">TIFF</button>
+                <button class="choice" type="button" data-value="GIF" aria-pressed="false">GIF</button>
+              </div>
+              <p id="format-note" aria-live="polite">WebP keeps the transparent background.</p>
+            </div>
+          </section>
+          <section class="panel" id="resize" role="tabpanel" aria-labelledby="tab-resize" hidden>
+            <div>
+              <h2>Smaller dimensions, same shape.</h2>
+              <p>Set a size limit for the long or short side. Resize on its own or alongside other changes, without stretching or enlarging your photos.</p>
+            </div>
+            <div class="controls slider"><label class="label" for="size">Long side</label><input type="range" id="size" min="480" max="2400" step="120" value="1440"><output class="label" id="size-value" for="size">1,440 px</output></div>
+          </section>
+          <section class="panel" id="extras" role="tabpanel" aria-labelledby="tab-extras" hidden>
+            <div>
+              <h2>A little more up its sleeve.</h2>
+              <p id="extras-note" aria-live="polite">Drop in files or whole folders, including subfolders. Preview images, follow or stop the work, and review results. You can also start from your file manager.</p>
+            </div>
+            <div class="controls">
+              <div id="topics" class="choices" role="group" aria-label="More features">
+                <button class="choice" type="button" data-value="batch" aria-pressed="true">Batch work</button>
+                <button class="choice" type="button" data-value="privacy" aria-pressed="false">Privacy</button>
+                <button class="choice" type="button" data-value="save" aria-pressed="false">Saving</button>
+                <button class="choice" type="button" data-value="updates" aria-pressed="false">Updates</button>
+              </div>
+            </div>
+          </section>
+          <noscript><p>Marzianetto compresses, converts, and resizes images locally. Add files or folders, choose where to save them, and keep the originals unless you confirm replacement. Enable JavaScript to try the interactive sample.</p></noscript>
+        </div>
+      </section>
+    </main>
+    <footer>
+      <div class="platforms"><strong>Free for</strong><span>macOS</span><span>Windows</span><span>Linux</span></div>
+      <a href="https://github.com/cioni03/Marzianetto">View on GitHub ↗</a>
+    </footer>
+  </div>
+  <dialog id="downloads" aria-labelledby="downloads-title">
+    <div class="dialog-head">
+      <h2 id="downloads-title">Choose your computer.</h2>
+      <form method="dialog"><button class="close" aria-label="Close downloads">×</button></form>
+    </div>
+    <p>The playground works on your phone. Marzianetto itself is a desktop app.</p>
+    <div class="download-links">
+      <a href="https://github.com/cioni03/Marzianetto/releases/latest/download/marzianetto-aarch64-apple-darwin.dmg">macOS · Apple Silicon <small>DMG ↗</small></a>
+      <a href="https://github.com/cioni03/Marzianetto/releases/latest/download/marzianetto-x86_64-pc-windows-msvc.zip">Windows · 64-bit <small>ZIP ↗</small></a>
+      <a href="https://github.com/cioni03/Marzianetto/releases/latest/download/marzianetto-linux-x86_64.AppImage">Linux · 64-bit <small>AppImage ↗</small></a>
+      <a href="https://github.com/cioni03/Marzianetto/releases">All releases <small>GitHub ↗</small></a>
+    </div>
+  </dialog>
+  <script>
+    const $ = id => document.getElementById(id);
+    const playground = $("playground");
+    const postcard = $("postcard");
+    const tabs = [...playground.querySelectorAll("[role=tab]")];
+    const integer = new Intl.NumberFormat("en");
+    const decimal = new Intl.NumberFormat("en", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const formats = {
+      JPG: "JPG cannot store transparency. The background turns white automatically.",
+      PNG: "PNG keeps transparency and crisp details, which is useful for icons and logos.",
+      WebP: "WebP keeps the transparent background.",
+      AVIF: "AVIF keeps transparent backgrounds and is designed for the web.",
+      BMP: "BMP can keep transparency, but files may be larger.",
+      TIFF: "TIFF keeps transparency. Only the first page of a multi-page TIFF is used.",
+      GIF: "GIF keeps fully transparent areas. Soft edges go on white. Only the first frame of an animated GIF is used."
+    };
+    const topics = {
+      batch: ["Work in batches", "Drop in files or whole folders, including subfolders. Preview images, follow or stop the work, and review results. You can also start from your file manager."],
+      privacy: ["On your device", "Your images never leave your computer. You can also remove details such as where a photo was taken or which camera took it."],
+      save: ["Keep the originals", "Save copies alongside the originals or in a separate folder. The originals stay untouched unless you choose and confirm replacement."],
+      updates: ["Updates on Mac", "On macOS, Marzianetto checks for a new version at launch. Choose to update and reopen the app or skip that particular release."]
+    };
+    let topic = "batch";
+
+    function render() {
+      let extension = "jpg", note = "2.40 MB", before = "Sample image", result, size = 1, blur = 0;
+      switch (playground.dataset.mode) {
+        case "compress": {
+          const quality = Number($("quality").value);
+          const fraction = .10 + .86 * (quality / 100) ** 3.5;
+          $("quality-value").textContent = quality + "%";
+          before = "2.40 MB before";
+          note = decimal.format(2.4 * fraction) + " MB";
+          result = Math.round((1 - fraction) * 100) + "% lighter";
+          blur = (100 - quality) / 105;
+          break;
+        }
+        case "convert": {
+          const format = playground.dataset.format;
+          before = "Original: PNG";
+          result = format === "JPG" ? "White background" : "Transparency kept";
+          extension = format.toLowerCase();
+          note = format;
+          $("format-note").textContent = formats[format];
+          break;
+        }
+        case "resize": {
+          const width = Number($("size").value);
+          before = "2,400 px before";
+          note = integer.format(width) + " × " + integer.format(width * 9 / 16);
+          result = integer.format(width) + " px wide";
+          $("size-value").textContent = integer.format(width) + " px";
+          size = .44 + .56 * width / 2400;
+          break;
+        }
+        default:
+          result = topics[topic][0];
+          $("extras-note").textContent = topics[topic][1];
+      }
+      $("extension").textContent = "." + extension;
+      $("image-note").textContent = note;
+      $("original").textContent = before;
+      $("result").textContent = result;
+      postcard.style.setProperty("--size", size);
+      postcard.style.setProperty("--soft", blur + "px");
+    }
+
+    function selectTab(selected) {
+      tabs.forEach(tab => {
+        const active = tab === selected;
+        tab.setAttribute("aria-selected", String(active));
+        tab.tabIndex = active ? 0 : -1;
+        $(tab.getAttribute("aria-controls")).hidden = !active;
+      });
+      playground.dataset.mode = selected.dataset.mode;
+      render();
+    }
+
+    tabs.forEach((tab, index) => {
+      tab.addEventListener("click", () => selectTab(tab));
+      tab.addEventListener("keydown", event => {
+        let next;
+        if (event.key === "ArrowRight") next = tabs[(index + 1) % tabs.length];
+        if (event.key === "ArrowLeft") next = tabs[(index + tabs.length - 1) % tabs.length];
+        if (event.key === "Home") next = tabs[0];
+        if (event.key === "End") next = tabs[tabs.length - 1];
+        if (next) {
+          event.preventDefault();
+          selectTab(next);
+          next.focus();
+        }
+      });
+    });
+
+    function choose(id, change) {
+      const buttons = [...$(id).querySelectorAll("button")];
+      buttons.forEach(button => button.addEventListener("click", () => {
+        buttons.forEach(item => item.setAttribute("aria-pressed", String(item === button)));
+        change(button.dataset.value);
+        render();
+      }));
+    }
+    choose("formats", format => { playground.dataset.format = format; });
+    choose("topics", value => { topic = value; });
+    $("quality").addEventListener("input", render);
+    $("size").addEventListener("input", render);
+    const downloads = $("downloads");
+    $("download").addEventListener("click", event => {
+      if (typeof downloads.showModal !== "function" || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+      event.preventDefault();
+      downloads.showModal();
+    });
+    render();
+  </script>
+</body>
+</html>

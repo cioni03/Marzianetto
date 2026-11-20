@@ -98,6 +98,9 @@ pub struct Settings {
     pub convert_format: bool,
     pub format: OutputFormat,
     pub destination: Destination,
+    /// Suffisso delle copie nella modalità «accanto agli originali»: il
+    /// trattino basso iniziale viene aggiunto automaticamente (vedi
+    /// [`Settings::file_suffix`]).
     pub suffix: String,
     pub strip_metadata: bool,
     /// Opzioni del recupero da pagina web, con valori predefiniti
@@ -125,7 +128,7 @@ impl Default for Settings {
             convert_format: false,
             format: OutputFormat::Png,
             destination: Destination::SiblingFolder,
-            suffix: "_compressed".into(),
+            suffix: "compressed".into(),
             strip_metadata: true,
             web_min_kb: 50,
             web_max_pages: 10,
@@ -177,6 +180,20 @@ impl Settings {
         }
     }
 
+    /// Suffisso effettivo dei nomi file: vuoto se non impostato, altrimenti con
+    /// il trattino basso iniziale garantito (senza raddoppiarlo nelle preferenze
+    /// salvate dalle versioni precedenti, che lo includevano già).
+    pub fn file_suffix(&self) -> String {
+        let suffix = self.suffix.trim();
+        if suffix.is_empty() {
+            String::new()
+        } else if suffix.starts_with('_') {
+            suffix.to_owned()
+        } else {
+            format!("_{suffix}")
+        }
+    }
+
     pub fn validate(&self) -> Result<()> {
         if self.quality > 100 || self.long_edge == 0 || self.long_edge > 100_000 {
             bail!("Qualità o dimensione non valida.");
@@ -189,9 +206,6 @@ impl Settings {
             || self.suffix.len() > 80
         {
             bail!("Il suffisso contiene caratteri non validi (o supera 80 byte).");
-        }
-        if self.destination == Destination::SiblingFolder && self.suffix.trim().is_empty() {
-            bail!("La cartella separata richiede un nome non vuoto.");
         }
         Ok(())
     }
@@ -252,6 +266,18 @@ mod tests {
             ..Default::default()
         };
         assert!(settings.validate().is_err());
+    }
+
+    #[test]
+    fn file_suffix_prepends_underscore_once() {
+        let mut settings = Settings::default();
+        assert_eq!(settings.suffix, "compressed");
+        assert_eq!(settings.file_suffix(), "_compressed");
+        // Le preferenze salvate dalle versioni precedenti includevano già il «_».
+        settings.suffix = "_compressed".into();
+        assert_eq!(settings.file_suffix(), "_compressed");
+        settings.suffix = "  ".into();
+        assert_eq!(settings.file_suffix(), "");
     }
 
     #[test]

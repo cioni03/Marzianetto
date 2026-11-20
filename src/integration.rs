@@ -44,6 +44,32 @@ pub fn reveal(path: &Path) {
     let _ = command.arg(path).spawn();
 }
 
+/// Mostra un file nel file manager, selezionato al suo interno.
+pub fn reveal_in_folder(path: &Path) {
+    #[cfg(target_os = "macos")]
+    let mut command = {
+        let mut command = std::process::Command::new("/usr/bin/open");
+        command.arg("-R").arg(path);
+        command
+    };
+    #[cfg(target_os = "windows")]
+    let mut command = {
+        let mut command = std::process::Command::new("explorer");
+        command.arg(format!("/select,{}", path.display()));
+        command
+    };
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let mut command = {
+        // xdg-open non seleziona: apre la cartella che contiene il file.
+        let mut command = std::process::Command::new("xdg-open");
+        if let Some(parent) = path.parent() {
+            command.arg(parent);
+        }
+        command
+    };
+    let _ = command.spawn();
+}
+
 pub fn install() -> Result<String> {
     if std::env::var_os("FLATPAK_ID").is_some() {
         bail!("{}", description());

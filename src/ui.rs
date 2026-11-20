@@ -32,6 +32,7 @@ struct Row {
     texture: TextureHandle,
     status: Status,
     replaced: bool,
+    selected: bool,
 }
 
 #[derive(Default)]
@@ -50,6 +51,7 @@ pub struct CompressorApp {
     save_due: Option<Instant>,
     settings_error: Option<String>,
     rows: Vec<Row>,
+    last_selected: Option<usize>,
     import_rx: Option<Receiver<ImportEvent>>,
     work_rx: Option<Receiver<CompressionEvent>>,
     dialog_rx: Option<Receiver<Option<Vec<PathBuf>>>>,
@@ -107,6 +109,7 @@ impl CompressorApp {
             settings_error,
             save_due: None,
             rows: Vec::new(),
+            last_selected: None,
             import_rx: None,
             work_rx: None,
             dialog_rx: None,
@@ -273,6 +276,7 @@ impl CompressorApp {
                         texture,
                         status: Status::Ready,
                         replaced: false,
+                        selected: false,
                     });
                 }
                 Some(Ok(ImportEvent::Error(error))) => self.message(error),
@@ -526,7 +530,7 @@ impl CompressorApp {
             ui.label(
                 RichText::new(match self.settings.destination {
                     Destination::SiblingFolder => {
-                        "Crea una cartella accanto all'origine e conserva le sottocartelle."
+                        "Crea una sottocartella «<nome cartella>_converted» dove si trovano le immagini, numerata se esiste già. Le sottocartelle vengono riprodotte e i nomi dei file restano invariati."
                     }
                     Destination::SameFolder => "Crea copie. Gli originali rimangono intatti.",
                     Destination::Replace => "Irreversibile: richiede conferma. Conserva un backup.",
@@ -538,45 +542,27 @@ impl CompressorApp {
                     theme::MUTED
                 }),
             );
-            // Il campo cambia significato con la destinazione; con la
-            // sostituzione non serve e resta nascosto.
-            match self.settings.destination {
-                Destination::SiblingFolder => {
-                    ui.label("Nome cartella");
-                    ui.add_sized(
-                        [ui.available_width(), 34.0],
-                        egui::TextEdit::singleline(&mut self.settings.suffix),
-                    );
-                    ui.label(
-                        RichText::new(format!(
-                            "Esempio: cartella «Vacanze{}» accanto all'originale, nomi dei file invariati.",
-                            self.settings.suffix
-                        ))
-                        .small()
-                        .color(theme::BLUE),
-                    );
-                }
-                Destination::SameFolder => {
-                    ui.label("Suffisso file");
-                    ui.add_sized(
-                        [ui.available_width(), 34.0],
-                        egui::TextEdit::singleline(&mut self.settings.suffix),
-                    );
-                    ui.label(
-                        RichText::new(format!(
-                            "Esempio: foto{}.{}",
-                            self.settings.suffix,
-                            if self.settings.convert_format {
-                                self.settings.format.extension()
-                            } else {
-                                "estensione originale"
-                            }
-                        ))
-                        .small()
-                        .color(theme::BLUE),
-                    );
-                }
-                Destination::Replace => {}
+            // Il suffisso serve solo accanto agli originali: la cartella
+            // separata si chiama da sola e la sostituzione non lo usa.
+            if self.settings.destination == Destination::SameFolder {
+                ui.label("Suffisso file");
+                ui.add_sized(
+                    [ui.available_width(), 34.0],
+                    egui::TextEdit::singleline(&mut self.settings.suffix),
+                );
+                ui.label(
+                    RichText::new(format!(
+                        "Esempio: foto{}.{}",
+                        self.settings.file_suffix(),
+                        if self.settings.convert_format {
+                            self.settings.format.extension()
+                        } else {
+                            "estensione originale"
+                        }
+                    ))
+                    .small()
+                    .color(theme::BLUE),
+                );
             }
         });
         if let Err(err) = self.settings.validate() {
@@ -634,18 +620,73 @@ impl CompressorApp {
         }
     }
 
-    fn table(&self, ui: &mut egui::Ui) {
+    fn table(&mut self, ui: &mut egui::Ui) {
+        // Azioni delle icone della riga: raccolte durante il rendering e
+        // applicate dopo, perché il corpo della tabella prende in prestito
+        // self.rows. Le icone restano sempre al loro posto: durante
+        // l'elaborazione sono solo disattivate, così il layout non salta.
+        let mut remove_index: Option<usize> = None;
+        let mut reveal_index: Option<usize> = None;
+        let mut toggle_indices: Vec<(usize, bool, bool)> = Vec::new();
+        let mut toggle_all: Option<bool> = None;
+        let mut bulk_remove = false;
+        let editable = self.work_rx.is_none() && self.import_rx.is_none();
+        let shift_held = ui.input(|i| i.modifiers.shift);
+
+        if editable && !self.rows.is_empty() {
+            let select_all_shortcut = !ui.ctx().wants_keyboard_input()
+                && ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::A));
+            if select_all_shortcut {
+                let all_selected = self.rows.iter().all(|r| r.selected);
+                toggle_all = Some(!all_selected);
+            }
+
+            let delete_shortcut = !ui.ctx().wants_keyboard_input()
+                && ui.input(|i| {
+                    i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace)
+                });
+            if delete_shortcut && self.rows.iter().any(|r| r.selected) {
+                bulk_remove = true;
+            }
+        }
+
+        // Un'altezza per riga, misurata sull'anteprima reale: le immagini
+        // panoramiche non sprecano lo spazio verticale di quelle quadrate.
+        let heights: Vec<f32> = self.rows.iter().map(preview_row_height).collect();
         TableBuilder::new(ui)
             .striped(true)
-            .resizable(true)
+            // Colonne fisse: la colonna del nome assorbe lo spazio in più e
+            // la tabella riempie la finestra senza mai uscirne. Contenuto
+            // centrato in verticale dentro righe compatte.
             .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-            .column(Column::exact(84.0))
+            .column(Column::exact(34.0))
+            .column(Column::exact(68.0))
             .column(Column::remainder().at_least(130.0))
             .column(Column::initial(68.0))
             .column(Column::initial(85.0))
             .column(Column::initial(85.0))
             .column(Column::initial(112.0))
+            .column(Column::exact(76.0))
             .header(36.0, |mut header| {
+                header.col(|ui| {
+                    let all_selected =
+                        !self.rows.is_empty() && self.rows.iter().all(|r| r.selected);
+                    let mut checked = all_selected;
+                    if ui
+                        .add_enabled(
+                            editable && !self.rows.is_empty(),
+                            egui::Checkbox::without_text(&mut checked),
+                        )
+                        .on_hover_text(if all_selected {
+                            "Deseleziona tutte"
+                        } else {
+                            "Seleziona tutte"
+                        })
+                        .clicked()
+                    {
+                        toggle_all = Some(!all_selected);
+                    }
+                });
                 for name in [
                     "Foto",
                     "Nome / percorso",
@@ -653,6 +694,7 @@ impl CompressorApp {
                     "Originale",
                     "Output",
                     "Risparmio",
+                    "",
                 ] {
                     header.col(|ui| {
                         ui.label(RichText::new(name).small().strong().color(theme::MUTED));
@@ -660,9 +702,22 @@ impl CompressorApp {
                 }
             })
             .body(|body| {
-                body.rows(88.0, self.rows.len(), |mut table_row| {
-                    let row = &self.rows[table_row.index()];
+                body.heterogeneous_rows(heights.into_iter(), |mut table_row| {
+                    let index = table_row.index();
+                    let row = &self.rows[index];
+                    table_row.set_selected(row.selected);
                     table_row.col(|ui| {
+                        let mut checked = row.selected;
+                        if ui
+                            .add_enabled(editable, egui::Checkbox::without_text(&mut checked))
+                            .changed()
+                        {
+                            toggle_indices.push((index, checked, shift_held));
+                        }
+                    });
+                    table_row.col(|ui| {
+                        // Spaziatura ridotta tra miniatura e dimensioni.
+                        ui.spacing_mut().item_spacing.y = 3.0;
                         ui.vertical_centered(|ui| {
                             ui.add(
                                 egui::Image::new(&row.texture)
@@ -792,8 +847,96 @@ impl CompressorApp {
                             });
                         }
                     });
+                    // Rimuovi dalla lista e apri la cartella del file: sempre
+                    // visibili e disattivate durante l'elaborazione, così il
+                    // layout resta stabile frame dopo frame.
+                    table_row.col(|ui| {
+                        ui.spacing_mut().button_padding = Vec2::new(6.0, 3.0);
+                        ui.spacing_mut().item_spacing.x = 4.0;
+                        ui.horizontal(|ui| {
+                            if ui
+                                .add_enabled(
+                                    editable,
+                                    egui::Button::new(
+                                        RichText::new("🗑").size(12.0).color(theme::DANGER),
+                                    )
+                                    .min_size(Vec2::new(28.0, 26.0)),
+                                )
+                                .on_hover_text("Rimuovi dalla lista")
+                                .on_disabled_hover_text(
+                                    "Attendi la fine dell'elaborazione per modificare la lista",
+                                )
+                                .clicked()
+                            {
+                                remove_index = Some(index);
+                            }
+                            if ui
+                                .add_enabled(
+                                    editable,
+                                    egui::Button::new(
+                                        RichText::new("📁").size(12.0).color(theme::BLUE),
+                                    )
+                                    .min_size(Vec2::new(28.0, 26.0)),
+                                )
+                                .on_hover_text("Mostra la cartella del file")
+                                .clicked()
+                            {
+                                reveal_index = Some(index);
+                            }
+                        });
+                    });
                 });
             });
+        for (index, new_val, shift) in toggle_indices {
+            if shift {
+                if let Some(last) = self.last_selected {
+                    let start = last.min(index);
+                    let end = last.max(index);
+                    for idx in start..=end {
+                        if let Some(r) = self.rows.get_mut(idx) {
+                            r.selected = new_val;
+                        }
+                    }
+                } else {
+                    if let Some(r) = self.rows.get_mut(index) {
+                        r.selected = new_val;
+                    }
+                    self.last_selected = Some(index);
+                }
+            } else {
+                if let Some(r) = self.rows.get_mut(index) {
+                    r.selected = new_val;
+                }
+                self.last_selected = Some(index);
+            }
+        }
+        if let Some(all_state) = toggle_all {
+            for r in &mut self.rows {
+                r.selected = all_state;
+            }
+            self.last_selected = None;
+        }
+        if bulk_remove && editable {
+            self.rows.retain(|r| !r.selected);
+            self.last_selected = None;
+            if self.rows.is_empty() {
+                self.summary = None;
+            }
+        }
+        if let Some(index) = remove_index {
+            if index < self.rows.len() {
+                self.rows.remove(index);
+                self.last_selected = None;
+                if self.rows.is_empty() {
+                    self.summary = None;
+                }
+            }
+        }
+        if let Some(index) = reveal_index {
+            if let Some(row) = self.rows.get(index) {
+                integration::reveal_in_folder(&row.source.path);
+            }
+        }
     }
 
     fn popups(&mut self, ctx: &egui::Context) {
@@ -1000,7 +1143,31 @@ impl eframe::App for CompressorApp {
                             .clicked()
                         {
                             self.rows.clear();
+                            self.last_selected = None;
                             self.summary = None;
+                        }
+                        let selected_count = self.rows.iter().filter(|r| r.selected).count();
+                        if selected_count > 0 {
+                            if ui
+                                .add_enabled(
+                                    !blocked,
+                                    egui::Button::new(
+                                        RichText::new(format!(
+                                            "Rimuovi selezionate ({selected_count})"
+                                        ))
+                                        .color(theme::DANGER),
+                                    )
+                                    .min_size(Vec2::new(170.0, 40.0)),
+                                )
+                                .on_hover_text("Rimuove tutte le immagini selezionate dalla lista")
+                                .clicked()
+                            {
+                                self.rows.retain(|r| !r.selected);
+                                self.last_selected = None;
+                                if self.rows.is_empty() {
+                                    self.summary = None;
+                                }
+                            }
                         }
                         if !self.messages.is_empty()
                             && ui
@@ -1046,6 +1213,24 @@ impl eframe::App for CompressorApp {
                             ui.label(RichText::new(format!("Output {} • {}", self.settings.output_label(), if self.settings.resize { "Ridimensionamento attivo" } else { "Dimensioni originali" })).small().color(theme::MUTED));
                         });
                     }
+                    // Dopo una conversione riuscita, sulla stessa riga del
+                    // bottone principale: a destra, stessa misura (230×40).
+                    if self.summary.as_ref().is_some_and(|summary| summary.succeeded > 0) {
+                        if let Some(dir) = self.output_dir() {
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                if ui
+                                    .add(
+                                        egui::Button::new("Apri cartella dei risultati")
+                                            .min_size(Vec2::new(230.0, 40.0)),
+                                    )
+                                    .on_hover_text(dir.display().to_string())
+                                    .clicked()
+                                {
+                                    integration::reveal(&dir);
+                                }
+                            });
+                        }
+                    }
                 });
             }
             if let Some(summary) = &self.summary {
@@ -1064,24 +1249,13 @@ impl eframe::App for CompressorApp {
                         });
                     }
                 });
-                if summary.succeeded > 0 {
-                    if let Some(dir) = self.output_dir() {
-                        if ui
-                            .button("Apri cartella dei risultati")
-                            .on_hover_text(dir.display().to_string())
-                            .clicked()
-                        {
-                            integration::reveal(&dir);
-                        }
-                    }
+                if self.run_destination == Destination::Replace {
+                    ui.label(RichText::new(if summary.retained > 0 {
+                        "Alcuni originali sono stati conservati: verifica gli avvisi prima di eliminare file."
+                    } else {
+                        "Gli originali elaborati correttamente sono stati sostituiti. Valori negativi indicano un aumento di spazio."
+                    }).small().weak());
                 }
-                ui.label(RichText::new(if self.run_destination != Destination::Replace {
-                    "Risparmio rispetto agli originali: le copie non liberano spazio finché gli originali restano sul disco."
-                } else if summary.retained > 0 {
-                    "Alcuni originali sono stati conservati: verifica gli avvisi prima di eliminare file."
-                } else {
-                    "Gli originali elaborati correttamente sono stati sostituiti. Valori negativi indicano un aumento di spazio."
-                }).small().weak());
             }
         });
         let before = self.settings.clone();
@@ -1094,42 +1268,147 @@ impl eframe::App for CompressorApp {
                     egui::ScrollArea::vertical().show(ui, |ui| self.settings_panel(ui));
                 });
             });
-        egui::CentralPanel::default().frame(egui::Frame::new().fill(theme::BACKGROUND).inner_margin(theme::PADDING)).show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.heading("Le tue immagini");
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(RichText::new(format!("{} file", self.rows.len())).small().color(theme::BLUE));
-                });
-            });
-            ui.label(RichText::new("Trascina file o cartelle. Passa su una miniatura per ingrandirla.").small().color(theme::MUTED));
-            ui.add_space(theme::GAP);
-            if self.rows.is_empty() {
-                let height = ui.available_height();
-                egui::Frame::new().fill(theme::PANEL).stroke(egui::Stroke::new(1.0_f32, theme::BORDER))
-                    .corner_radius(16).inner_margin(24).show(ui, |ui| {
-                    ui.set_min_size(Vec2::new(ui.available_width(), (height - 48.0).max(200.0)));
-                    ui.vertical_centered(|ui| {
-                        ui.add_space((height * 0.2).max(16.0));
-                        ui.horizontal(|ui| {
-                            ui.add_space((ui.available_width() - 64.0) / 2.0);
-                            theme::logo(ui, &self.logo, 64.0);
-                        });
-                        ui.add_space(16.0);
-                            ui.label(RichText::new("Trascina le tue immagini qui").size(26.0).strong());
-                        ui.label(RichText::new("Trascina qui immagini o intere cartelle").color(theme::MUTED));
-                        ui.add_space(theme::GAP);
-                        if ui.add_enabled(!blocked, theme::primary("Scegli immagini")).clicked() { self.choose(false); }
-                        ui.add_space(theme::GAP);
-                        if ui.add_enabled(!blocked, egui::Button::new("Recupera da pagina web").min_size(Vec2::new(190.0, 36.0))).clicked() { self.web.open = true; }
-                        ui.add_space(16.0);
-                        ui.label(RichText::new("JPEG · PNG · WebP · BMP · GIF · TIFF").small().color(theme::BLUE));
-                        ui.label(RichText::new("Converti anche in AVIF. Gli originali restano al sicuro nelle modalità copia.").small().color(theme::MUTED));
+        egui::CentralPanel::default()
+            .frame(
+                egui::Frame::new()
+                    .fill(theme::BACKGROUND)
+                    .inner_margin(theme::PADDING),
+            )
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.heading("Le tue immagini");
+                    let selected_count = self.rows.iter().filter(|r| r.selected).count();
+                    if selected_count > 0 {
+                        ui.add_space(8.0);
+                        ui.label(
+                            RichText::new(format!("{selected_count} selezionate"))
+                                .small()
+                                .color(theme::ACCENT)
+                                .strong(),
+                        );
+                        if ui
+                            .add_enabled(
+                                !blocked,
+                                egui::Button::new(
+                                    RichText::new(format!(
+                                        "Rimuovi selezionate ({selected_count})"
+                                    ))
+                                    .color(theme::DANGER)
+                                    .strong(),
+                                ),
+                            )
+                            .on_hover_text(
+                                "Rimuove tutte le immagini selezionate dalla lista (Backspace / Canc)",
+                            )
+                            .clicked()
+                        {
+                            self.rows.retain(|r| !r.selected);
+                            self.last_selected = None;
+                            if self.rows.is_empty() {
+                                self.summary = None;
+                            }
+                        }
+                        if ui
+                            .add_enabled(
+                                !blocked,
+                                egui::Button::new(RichText::new("Deseleziona").small()),
+                            )
+                            .clicked()
+                        {
+                            for r in &mut self.rows {
+                                r.selected = false;
+                            }
+                            self.last_selected = None;
+                        }
+                    } else if !self.rows.is_empty() {
+                        ui.add_space(8.0);
+                        if ui
+                            .add_enabled(
+                                !blocked,
+                                egui::Button::new(RichText::new("Seleziona tutte").small()),
+                            )
+                            .on_hover_text("Seleziona tutte le immagini (⌘A)")
+                            .clicked()
+                        {
+                            for r in &mut self.rows {
+                                r.selected = true;
+                            }
+                        }
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(
+                            RichText::new(format!("{} file", self.rows.len()))
+                                .small()
+                                .color(theme::BLUE),
+                        );
                     });
                 });
-            } else {
-                self.table(ui);
-            }
-        });
+                ui.label(
+                    RichText::new(
+                        "Trascina file o cartelle. Passa su una miniatura per ingrandirla.",
+                    )
+                    .small()
+                    .color(theme::MUTED),
+                );
+                ui.add_space(theme::GAP);
+                if self.rows.is_empty() {
+                    let height = ui.available_height();
+                    egui::Frame::new()
+                        .fill(theme::PANEL)
+                        .stroke(egui::Stroke::new(1.0_f32, theme::BORDER))
+                        .corner_radius(16)
+                        .inner_margin(24)
+                        .show(ui, |ui| {
+                            ui.set_min_size(Vec2::new(
+                                ui.available_width(),
+                                (height - 48.0).max(200.0),
+                            ));
+                            ui.vertical_centered(|ui| {
+                                ui.add_space((height * 0.2).max(16.0));
+                                ui.horizontal(|ui| {
+                                    ui.add_space((ui.available_width() - 64.0) / 2.0);
+                                    theme::logo(ui, &self.logo, 64.0);
+                                });
+                                ui.add_space(16.0);
+                                ui.label(
+                                    RichText::new("Trascina le tue immagini qui")
+                                        .size(26.0)
+                                        .strong(),
+                                );
+                                ui.label(
+                                    RichText::new("Trascina qui immagini o intere cartelle")
+                                        .color(theme::MUTED),
+                                );
+                                ui.add_space(theme::GAP);
+                                if ui
+                                    .add_enabled(!blocked, theme::primary("Scegli immagini"))
+                                    .clicked()
+                                {
+                                    self.choose(false);
+                                }
+                                ui.add_space(theme::GAP);
+                                if ui
+                                    .add_enabled(
+                                        !blocked,
+                                        egui::Button::new("Recupera da pagina web")
+                                            .min_size(Vec2::new(190.0, 36.0)),
+                                    )
+                                    .clicked()
+                                {
+                                    self.web.open = true;
+                                }
+                                ui.add_space(16.0);
+                                ui.label(
+                                    RichText::new("JPEG · PNG · WebP · BMP · GIF · TIFF")
+                                        .small()
+                                        .color(theme::BLUE),
+                                );
+                            });
+                        });
+                } else {
+                    self.table(ui);
+                }
+            });
         self.popups(ctx);
         // Il confronto dopo i popup copre anche le modifiche alle preferenze
         // fatte dalla finestra di importazione dal web.
@@ -1174,6 +1453,17 @@ impl eframe::App for CompressorApp {
             let _ = self.settings.save();
         }
     }
+}
+
+/// Altezza di una riga della tabella: l'anteprima viene ridotta a 56 px dal
+/// lato maggiore senza mai ingrandirla, sotto sta l'etichetta delle
+/// dimensioni e il resto delle colonne fissa un minimo (nome su due righe).
+fn preview_row_height(row: &Row) -> f32 {
+    let [width, height] = row.source.dimensions;
+    let factor = 1.0_f32
+        .min(56.0 / width.max(1) as f32)
+        .min(56.0 / height.max(1) as f32);
+    (height as f32 * factor + 3.0 + 15.0).max(48.0)
 }
 
 /// Antenato comune più profondo tra due percorsi, confrontati per componente.
@@ -1311,8 +1601,10 @@ mod tests {
 
     #[test]
     fn suffix_field_follows_destination_choice() {
+        // La cartella separata si chiama da sola e la sostituzione non usa
+        // suffissi: il campo esiste solo accanto agli originali.
         for (destination, expected) in [
-            (Destination::SiblingFolder, Some("Nome cartella")),
+            (Destination::SiblingFolder, None),
             (Destination::SameFolder, Some("Suffisso file")),
             (Destination::Replace, None),
         ] {
@@ -1351,14 +1643,12 @@ mod tests {
                     labels.iter().any(|label| label == label),
                     "manca «{label}» con {destination:?}"
                 ),
-                // Con la sostituzione il campo sparisce: nemmeno il valore
-                // del suffisso deve più comparire nel pannello.
+                // Senza campo, nemmeno il valore del suffisso deve comparire
+                // nel pannello (la descrizione cita solo «_converted»).
                 None => {
-                    assert!(!labels
-                        .iter()
-                        .any(|label| label == "Nome cartella" || label == "Suffisso file"));
+                    assert!(!labels.iter().any(|label| label == "Suffisso file"));
                     assert!(
-                        !labels.iter().any(|label| label.contains("_compressed")),
+                        !labels.iter().any(|label| label.contains("compressed")),
                         "il suffisso è ancora visibile: {labels:?}"
                     );
                 }
@@ -1386,6 +1676,120 @@ mod tests {
             common_ancestor(Path::new("/a/b"), Path::new("/c")),
             PathBuf::from("/")
         );
+    }
+
+    // Con il puntatore fermo su una riga le icone restano identiche e nessuna
+    // riga sparisce: regressione per lo sfarfallio della prima versione hover.
+    // La colonna delle azioni deve anche restare dentro il pannello.
+    #[test]
+    fn row_action_icons_are_always_visible_and_stable() {
+        let ctx = egui::Context::default();
+        let cc = eframe::CreationContext::_new_kittest(ctx.clone());
+        let mut app = CompressorApp::new(&cc, Vec::new());
+        // Panoramica, quadrata e verticale: le righe si adattano a ciascuna.
+        for (n, dimensions) in [(300, 70), (64, 64), (100, 200)].into_iter().enumerate() {
+            let texture = ctx.load_texture(
+                format!("test-preview-{n}"),
+                egui::ColorImage::new([1, 1], egui::Color32::BLACK),
+                Default::default(),
+            );
+            app.rows.push(Row {
+                source: Source {
+                    path: PathBuf::from(format!("/tmp/foto/a{n}.png")),
+                    root: PathBuf::from("/tmp/foto"),
+                    bytes: 10,
+                    modified: None,
+                    format: "Png".into(),
+                    dimensions: [dimensions.0, dimensions.1],
+                },
+                texture,
+                status: Status::Ready,
+                replaced: false,
+                selected: false,
+            });
+        }
+        // Il pannello centrale finisce dove inizia quello impostazioni.
+        let central_right = 1280.0 - 340.0;
+        let mut frame = eframe::Frame::_new_kittest();
+        let pointer = egui::pos2(400.0, 250.0);
+        let mut previous_waiting: Option<Vec<f32>> = None;
+        for iteration in 0..6 {
+            let output = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        Vec2::new(1280.0, 860.0),
+                    )),
+                    events: vec![egui::Event::PointerMoved(pointer)],
+                    ..Default::default()
+                },
+                |ctx| app.update(ctx, &mut frame),
+            );
+            let mut icons = 0;
+            let mut waiting: Vec<f32> = Vec::new();
+            for shape in &output.shapes {
+                if let egui::Shape::Text(text) = &shape.shape {
+                    if text.galley.job.text.contains('🗑') || text.galley.job.text.contains('📁')
+                    {
+                        icons += 1;
+                        assert!(
+                            text.pos.x + text.galley.size().x <= central_right + 1.0,
+                            "colonna delle azioni tagliata: {:?}",
+                            text.pos
+                        );
+                    }
+                    if text.galley.job.text == "In attesa" {
+                        waiting.push(text.pos.y);
+                    }
+                }
+            }
+            // Due icone per ciascuna delle tre righe, ogni frame.
+            assert_eq!(icons, 6, "frame {iteration}: icone mancanti o in eccesso");
+            // Le righe non cambiano posizione e non spariscono.
+            assert_eq!(waiting.len(), 3, "frame {iteration}: righe {waiting:?}");
+            if let Some(previous) = &previous_waiting {
+                assert_eq!(&waiting, previous, "frame {iteration}: righe instabili");
+            }
+            previous_waiting = Some(waiting);
+            assert_eq!(app.rows.len(), 3);
+        }
+        // Righe compatte: il passo tra due righe resta sotto i 90 px, anche
+        // per la riga alta (immagine verticale).
+        let spacing = previous_waiting.unwrap();
+        assert!(
+            spacing.windows(2).all(|pair| pair[1] - pair[0] < 90.0),
+            "righe troppo alte: {spacing:?}"
+        );
+    }
+
+    #[test]
+    fn row_height_follows_the_real_preview_shape() {
+        let ctx = egui::Context::default();
+        let texture = ctx.load_texture(
+            "test-preview-shape",
+            egui::ColorImage::new([1, 1], egui::Color32::BLACK),
+            Default::default(),
+        );
+        let row = |dimensions| Row {
+            source: Source {
+                path: PathBuf::from("/tmp/a.png"),
+                root: PathBuf::from("/tmp"),
+                bytes: 1,
+                modified: None,
+                format: "Png".into(),
+                dimensions,
+            },
+            texture: texture.clone(),
+            status: Status::Ready,
+            replaced: false,
+            selected: false,
+        };
+        // La firma panoramica non spreca l'altezza di un'immagine quadrata.
+        assert_eq!(preview_row_height(&row([300, 70])), 48.0);
+        assert_eq!(preview_row_height(&row([64, 64])), 74.0);
+        assert_eq!(preview_row_height(&row([100, 200])), 74.0);
+        // Immagine piccola: mai ingrandita, minimo dato dalle altre colonne.
+        assert_eq!(preview_row_height(&row([20, 10])), 48.0);
     }
 
     #[test]
@@ -1416,6 +1820,7 @@ mod tests {
                 original_retained: false,
             }),
             replaced: false,
+            selected: false,
         });
         app.summary = Some(Summary {
             input: 10,
@@ -1429,6 +1834,7 @@ mod tests {
         );
         let mut frame = eframe::Frame::_new_kittest();
         let mut button_visible = false;
+        let mut action_visible = false;
         let mut dimensions_visible = false;
         for _ in 0..3 {
             let output = ctx.run(
@@ -1446,6 +1852,9 @@ mod tests {
                     if text.galley.job.text == "Apri cartella dei risultati" {
                         button_visible = true;
                     }
+                    if text.galley.job.text == "Comprimi immagini" {
+                        action_visible = true;
+                    }
                     if text.galley.job.text == "1920×1080" {
                         dimensions_visible = true;
                     }
@@ -1453,6 +1862,10 @@ mod tests {
             }
         }
         assert!(button_visible, "manca il bottone per aprire la cartella");
+        assert!(
+            action_visible,
+            "il bottone principale deve restare accanto a quello della cartella"
+        );
         assert!(
             dimensions_visible,
             "mancano le dimensioni sotto la miniatura"
@@ -1510,5 +1923,146 @@ mod tests {
                 "manca «{expected}» in {labels:?}"
             );
         }
+    }
+
+    #[test]
+    fn mass_selection_and_bulk_removal_removes_selected_rows() {
+        let ctx = egui::Context::default();
+        let cc = eframe::CreationContext::_new_kittest(ctx.clone());
+        let mut app = CompressorApp::new(&cc, Vec::new());
+        for i in 0..5 {
+            let texture = ctx.load_texture(
+                format!("test-multi-{i}"),
+                egui::ColorImage::new([1, 1], egui::Color32::BLACK),
+                Default::default(),
+            );
+            app.rows.push(Row {
+                source: Source {
+                    path: PathBuf::from(format!("/tmp/img{i}.png")),
+                    root: PathBuf::from("/tmp"),
+                    bytes: 100,
+                    modified: None,
+                    format: "Png".into(),
+                    dimensions: [100, 100],
+                },
+                texture,
+                status: Status::Ready,
+                replaced: false,
+                selected: i == 1 || i == 3,
+            });
+        }
+        let mut frame = eframe::Frame::_new_kittest();
+        let output = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    Vec2::new(1280.0, 860.0),
+                )),
+                ..Default::default()
+            },
+            |ctx| app.update(ctx, &mut frame),
+        );
+        let labels: Vec<String> = output
+            .shapes
+            .into_iter()
+            .filter_map(|shape| {
+                if let egui::Shape::Text(text) = shape.shape {
+                    Some(text.galley.job.text.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert!(labels.iter().any(|l| l.contains("2 selezionate")));
+        assert!(labels.iter().any(|l| l.contains("Rimuovi selezionate (2)")));
+
+        let _ = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    Vec2::new(1280.0, 860.0),
+                )),
+                events: vec![egui::Event::Key {
+                    key: egui::Key::Delete,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+                ..Default::default()
+            },
+            |ctx| app.update(ctx, &mut frame),
+        );
+        assert_eq!(app.rows.len(), 3);
+        assert_eq!(app.rows[0].source.path, PathBuf::from("/tmp/img0.png"));
+        assert_eq!(app.rows[1].source.path, PathBuf::from("/tmp/img2.png"));
+        assert_eq!(app.rows[2].source.path, PathBuf::from("/tmp/img4.png"));
+    }
+
+    #[test]
+    fn select_all_shortcut_toggles_selection_for_all_rows() {
+        let ctx = egui::Context::default();
+        let cc = eframe::CreationContext::_new_kittest(ctx.clone());
+        let mut app = CompressorApp::new(&cc, Vec::new());
+        for i in 0..3 {
+            let texture = ctx.load_texture(
+                format!("test-sel-{i}"),
+                egui::ColorImage::new([1, 1], egui::Color32::BLACK),
+                Default::default(),
+            );
+            app.rows.push(Row {
+                source: Source {
+                    path: PathBuf::from(format!("/tmp/img{i}.png")),
+                    root: PathBuf::from("/tmp"),
+                    bytes: 100,
+                    modified: None,
+                    format: "Png".into(),
+                    dimensions: [100, 100],
+                },
+                texture,
+                status: Status::Ready,
+                replaced: false,
+                selected: false,
+            });
+        }
+        let mut frame = eframe::Frame::_new_kittest();
+        let _ = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    Vec2::new(1280.0, 860.0),
+                )),
+                modifiers: egui::Modifiers::COMMAND,
+                events: vec![egui::Event::Key {
+                    key: egui::Key::A,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::COMMAND,
+                }],
+                ..Default::default()
+            },
+            |ctx| app.update(ctx, &mut frame),
+        );
+        assert!(app.rows.iter().all(|r| r.selected));
+
+        let _ = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    Vec2::new(1280.0, 860.0),
+                )),
+                events: vec![egui::Event::Key {
+                    key: egui::Key::Backspace,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+                ..Default::default()
+            },
+            |ctx| app.update(ctx, &mut frame),
+        );
+        assert!(app.rows.is_empty());
     }
 }

@@ -106,11 +106,13 @@ pub fn card(ui: &mut egui::Ui, number: &str, title: &str, body: impl FnOnce(&mut
     ui.add_space(GAP);
 }
 
+/// Bottone principale, largo 230 px: la stessa misura del bottone
+/// «Apri cartella dei risultati» nella barra in basso, così sono identici.
 pub fn primary(text: &str) -> egui::Button<'_> {
     egui::Button::new(RichText::new(text).strong().color(BACKGROUND))
         .fill(ACCENT)
         .stroke(Stroke::NONE)
-        .min_size(Vec2::new(190.0, 40.0))
+        .min_size(Vec2::new(230.0, 40.0))
 }
 
 /// Logo vettoriale, senza font di icone o asset esterni.
@@ -128,7 +130,7 @@ mod tests {
         let ctx = egui::Context::default();
         apply(&ctx);
         // I font sono disponibili solo dopo la prima Context::run().
-        ctx.run(egui::RawInput::default(), |ctx| {
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
             for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
                 let font_id = egui::FontId::new(14.0, family.clone());
                 assert!(

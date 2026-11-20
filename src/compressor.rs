@@ -13,6 +13,7 @@ use image::{
     DynamicImage, ImageEncoder, ImageFormat,
 };
 use std::{
+    collections::HashMap,
     fs,
     io::{BufWriter, Write},
     path::{Path, PathBuf},
@@ -35,12 +36,20 @@ pub fn run(
     tx: Sender<CompressionEvent>,
     cancel: Arc<AtomicBool>,
 ) {
+    // Le cartelle di destinazione vanno decise tutte prima di scrivere il
+    // primo file: dopo, la cartella esisterebbe e i file successivi salirebbero
+    // di numero invece di condividere la stessa cartella.
+    let folders = if settings.destination == Destination::SiblingFolder {
+        plan_converted_folders(&sources)
+    } else {
+        HashMap::new()
+    };
     for (index, source) in sources.iter().enumerate() {
         if cancel.load(Ordering::Relaxed) {
             break;
         }
         let _ = tx.send(CompressionEvent::Started(index));
-        let result = compress(source, &settings).map_err(|err| format!("{err:#}"));
+        let result = compress_in(source, &settings, &folders).map_err(|err| format!("{err:#}"));
         let _ = tx.send(CompressionEvent::Completed(index, result));
     }
     let _ = tx.send(CompressionEvent::Finished {
@@ -59,7 +68,52 @@ fn check_source(source: &Source) -> Result<()> {
     Ok(())
 }
 
-pub fn output_path(source: &Source, settings: &Settings) -> Result<PathBuf> {
+/// Suffisso della sottocartella creata nella modalità «cartella separata».
+const CONVERTED_FOLDER_SUFFIX: &str = "_converted";
+
+/// La cartella «<nome>_converted» dentro la radice delle immagini: se esiste
+/// già, la prima libera viene numerata («_converted_2», «_converted_3»…).
+fn converted_folder(root: &Path) -> Result<PathBuf> {
+    let base = root.file_name().context("Nome cartella mancante")?;
+    let mut name = base.to_os_string();
+    name.push(CONVERTED_FOLDER_SUFFIX);
+    for index in 0..10_000 {
+        let candidate = if index == 0 {
+            root.join(&name)
+        } else {
+            let mut numbered = name.clone();
+            numbered.push(format!("_{index}"));
+            root.join(numbered)
+        };
+        if !candidate.exists() {
+            return Ok(candidate);
+        }
+    }
+    bail!(
+        "Troppe cartelle «{}{CONVERTED_FOLDER_SUFFIX}» già esistenti",
+        base.to_string_lossy()
+    );
+}
+
+/// Decide in anticipo la cartella di destinazione di ogni radice di
+/// importazione, così tutti i file dello stesso run condividono lo stesso numero.
+fn plan_converted_folders(sources: &[Source]) -> HashMap<PathBuf, PathBuf> {
+    let mut folders = HashMap::new();
+    for source in sources {
+        if !folders.contains_key(&source.root) {
+            if let Ok(folder) = converted_folder(&source.root) {
+                folders.insert(source.root.clone(), folder);
+            }
+        }
+    }
+    folders
+}
+
+pub fn output_path(
+    source: &Source,
+    settings: &Settings,
+    folders: &HashMap<PathBuf, PathBuf>,
+) -> Result<PathBuf> {
     let format = settings.output_format(&source.format)?;
     let parent = source
         .path
@@ -67,11 +121,10 @@ pub fn output_path(source: &Source, settings: &Settings) -> Result<PathBuf> {
         .context("Cartella di origine mancante")?;
     let stem = source.path.file_stem().context("Nome file mancante")?;
     let mut name = stem.to_os_string();
-    // Nella cartella separata il suffisso nomina solo la cartella: i file
-    // dentro conservano il nome originale. Accanto agli originali, invece,
-    // distingue le copie dai file di partenza.
+    // Nella cartella separata i file conservano il nome originale. Accanto
+    // agli originali, il suffisso (con «_» automatico) distingue le copie.
     if settings.destination == Destination::SameFolder {
-        name.push(&settings.suffix);
+        name.push(settings.file_suffix());
     }
     name.push(format!(".{}", format.extension()));
     match settings.destination {
@@ -87,20 +140,14 @@ pub fn output_path(source: &Source, settings: &Settings) -> Result<PathBuf> {
             })
         }
         Destination::SiblingFolder => {
-            let root_parent = source
-                .root
-                .parent()
-                .context("Impossibile creare una cartella accanto alla radice del disco")?;
-            let mut folder = source
-                .root
-                .file_name()
-                .context("Nome cartella mancante")?
-                .to_os_string();
-            folder.push(&settings.suffix);
+            let folder = folders
+                .get(&source.root)
+                .cloned()
+                .map_or_else(|| converted_folder(&source.root), Ok)?;
             let relative = parent
                 .strip_prefix(&source.root)
                 .context("File fuori dalla radice di importazione")?;
-            Ok(root_parent.join(folder).join(relative).join(name))
+            Ok(folder.join(relative).join(name))
         }
     }
 }
@@ -117,7 +164,18 @@ fn image_format(format: OutputFormat) -> ImageFormat {
     }
 }
 
+/// Versione per uso diretto (test e chiamate singole): la cartella «_converted»
+/// viene decisa al momento, file per file.
+#[allow(dead_code)]
 pub fn compress(source: &Source, settings: &Settings) -> Result<CompressionResult> {
+    compress_in(source, settings, &HashMap::new())
+}
+
+fn compress_in(
+    source: &Source,
+    settings: &Settings,
+    folders: &HashMap<PathBuf, PathBuf>,
+) -> Result<CompressionResult> {
     settings.validate()?;
     if !settings.has_operation() {
         bail!("Attiva almeno un'operazione: compressione, conversione o ridimensionamento.");
@@ -131,7 +189,7 @@ pub fn compress(source: &Source, settings: &Settings) -> Result<CompressionResul
     let (image, mut metadata) = metadata::decode(&source.path, settings.strip_metadata)?;
     let format = settings.output_format(&source.format)?;
     let image = resize(image, settings);
-    let target = output_path(source, settings)?;
+    let target = output_path(source, settings, folders)?;
     let parent = target.parent().context("Destinazione non valida")?;
     fs::create_dir_all(parent)?;
     // Scrive prima su un file temporaneo nello stesso filesystem. L'originale
@@ -548,7 +606,9 @@ mod tests {
             ..Default::default()
         };
         assert!(compress(&source, &settings).is_err());
-        assert!(!output_path(&source, &settings).unwrap().exists());
+        assert!(!output_path(&source, &settings, &HashMap::new())
+            .unwrap()
+            .exists());
         settings.resize = true;
         settings.long_edge = 16;
         let output = compress(&source, &settings).unwrap();
@@ -800,18 +860,58 @@ mod tests {
         let mut source = fixture(dir.path());
         source.root = PathBuf::from("/photos");
         source.path = PathBuf::from("/photos/holiday/a.png");
-        // Cartella separata: il suffisso nomina la cartella, non i file.
+        let no_folders: HashMap<PathBuf, PathBuf> = HashMap::new();
+        // Cartella separata: sottocartella «_converted» dentro la radice,
+        // con i nomi dei file originali.
         assert_eq!(
-            output_path(&source, &Settings::default()).unwrap(),
-            PathBuf::from("/photos_compressed/holiday/a.png")
+            output_path(&source, &Settings::default(), &no_folders).unwrap(),
+            PathBuf::from("/photos/photos_converted/holiday/a.png")
         );
-        // Accanto agli originali: il suffisso distingue le copie.
+        // Accanto agli originali: il suffisso con «_» automatico distingue le copie.
         let mut settings = Settings::default();
         settings.destination = Destination::SameFolder;
         assert_eq!(
-            output_path(&source, &settings).unwrap(),
+            output_path(&source, &settings, &no_folders).unwrap(),
             PathBuf::from("/photos/holiday/a_compressed.png")
         );
+    }
+
+    #[test]
+    fn converted_folder_gets_numbered_when_it_already_exists() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("photos");
+        fs::create_dir_all(root.join("photos_converted")).unwrap();
+        // La numerazione segue la stessa convenzione dei file: _1, _2…
+        assert_eq!(
+            converted_folder(&root).unwrap(),
+            root.join("photos_converted_1")
+        );
+        fs::create_dir_all(root.join("photos_converted_1")).unwrap();
+        assert_eq!(
+            converted_folder(&root).unwrap(),
+            root.join("photos_converted_2")
+        );
+    }
+
+    #[test]
+    fn one_run_shares_a_single_numbered_converted_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("photos");
+        fs::create_dir_all(&root).unwrap();
+        // Una run precedente ha già prodotto «photos_converted».
+        fs::create_dir_all(root.join("photos_converted")).unwrap();
+        let mut first = fixture(dir.path());
+        first.root = root.clone();
+        let mut second = fixture(dir.path());
+        second.root = root.clone();
+        let folders = plan_converted_folders(&[first, second]);
+        let folder = folders.get(&root).unwrap();
+        assert_eq!(folder, &root.join("photos_converted_1"));
+        // Anche dopo che il primo file ha creato la cartella, il secondo
+        // deve finire nella stessa: il numero non avanza durante la run.
+        fs::create_dir_all(folder).unwrap();
+        assert_eq!(folders.get(&root).unwrap(), folder);
+        assert_eq!(folders.len(), 1);
     }
 
     #[test]

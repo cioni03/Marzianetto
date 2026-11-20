@@ -8,10 +8,10 @@ mod model;
 mod settings;
 mod theme;
 mod ui;
-mod web;
-mod web_ui;
 #[cfg(target_os = "macos")]
 mod updater;
+mod web;
+mod web_ui;
 
 fn main() -> eframe::Result {
     let args: Vec<_> = std::env::args_os().skip(1).collect();

@@ -107,6 +107,11 @@ pub struct Settings {
     pub web_download_dir: Option<PathBuf>,
     #[cfg(target_os = "macos")]
     pub skipped_update: Option<String>,
+    /// Se falso, all'avvio non viene contattata la rete per cercare
+    /// aggiornamenti; resta possibile il controllo manuale dalle impostazioni.
+    #[cfg(target_os = "macos")]
+    #[serde(default = "enabled")]
+    pub check_updates: bool,
 }
 
 impl Default for Settings {
@@ -127,6 +132,8 @@ impl Default for Settings {
             web_download_dir: None,
             #[cfg(target_os = "macos")]
             skipped_update: None,
+            #[cfg(target_os = "macos")]
+            check_updates: true,
         }
     }
 }
@@ -184,7 +191,7 @@ impl Settings {
             bail!("Il suffisso contiene caratteri non validi (o supera 80 byte).");
         }
         if self.destination == Destination::SiblingFolder && self.suffix.trim().is_empty() {
-            bail!("Per la cartella separata è necessario un suffisso non vuoto.");
+            bail!("La cartella separata richiede un nome non vuoto.");
         }
         Ok(())
     }
@@ -275,6 +282,23 @@ mod tests {
         let restored: Settings =
             serde_json::from_slice(&serde_json::to_vec(&settings).unwrap()).unwrap();
         assert_eq!(restored.skipped_update, settings.skipped_update);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn update_check_is_on_by_default_and_can_be_disabled() {
+        assert!(
+            serde_json::from_str::<Settings>("{}")
+                .unwrap()
+                .check_updates
+        );
+        let settings = Settings {
+            check_updates: false,
+            ..Default::default()
+        };
+        let restored: Settings =
+            serde_json::from_slice(&serde_json::to_vec(&settings).unwrap()).unwrap();
+        assert!(!restored.check_updates);
     }
 
     #[test]

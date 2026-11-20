@@ -108,7 +108,9 @@ fn request(
     if let Some(range) = range {
         request = request.header("Range", range);
     }
-    request.call().with_context(|| format!("Richiesta verso {url}"))
+    request
+        .call()
+        .with_context(|| format!("Richiesta verso {url}"))
 }
 
 fn read_body(response: &mut ureq::http::Response<ureq::Body>, limit: u64) -> Result<Vec<u8>> {
@@ -668,11 +670,8 @@ fn download_one(
     };
     let mut temp = tempfile::NamedTempFile::new_in(dir)
         .with_context(|| format!("Cartella {} non scrivibile", dir.display()))?;
-    std::io::copy(
-        &mut response.body_mut().as_reader(),
-        temp.as_file_mut(),
-    )
-    .with_context(|| format!("Download di {} interrotto", image.url))?;
+    std::io::copy(&mut response.body_mut().as_reader(), temp.as_file_mut())
+        .with_context(|| format!("Download di {} interrotto", image.url))?;
     temp.as_file().sync_all()?;
     persist_with_numbering(temp, dir, &stem, &extension)
 }
@@ -737,7 +736,13 @@ fn file_parts(url: &Url, format: &str, content_type: Option<&str>) -> (String, S
     };
     let mut stem: String = stem
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
     stem.truncate(120);
     let mut stem = stem.trim_matches(['.', '-']).to_string();
@@ -979,8 +984,26 @@ fn downloadable(url: &Url) -> bool {
     };
     matches!(
         extension.to_ascii_lowercase().as_str(),
-        "pdf" | "zip" | "rar" | "7z" | "gz" | "tar" | "mp3" | "mp4" | "avi" | "mov" | "m4a"
-            | "wav" | "woff" | "woff2" | "ttf" | "otf" | "css" | "js" | "json" | "ico"
+        "pdf"
+            | "zip"
+            | "rar"
+            | "7z"
+            | "gz"
+            | "tar"
+            | "mp3"
+            | "mp4"
+            | "avi"
+            | "mov"
+            | "m4a"
+            | "wav"
+            | "woff"
+            | "woff2"
+            | "ttf"
+            | "otf"
+            | "css"
+            | "js"
+            | "json"
+            | "ico"
     )
 }
 
@@ -1087,7 +1110,12 @@ fn crawl(
 
 /// Analizza una pagina (o un intero sito), verifica con richieste parziali
 /// le immagini trovate e invia gli eventi alla UI.
-pub fn scan(start: &Url, options: &ScanOptions, cancel: &Arc<AtomicBool>, tx: SyncSender<ScanEvent>) {
+pub fn scan(
+    start: &Url,
+    options: &ScanOptions,
+    cancel: &Arc<AtomicBool>,
+    tx: SyncSender<ScanEvent>,
+) {
     let agent = agent();
     let mut candidates: Vec<Candidate> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
@@ -1158,7 +1186,10 @@ mod tests {
     fn png_bytes(width: u32, height: u32) -> Vec<u8> {
         let mut bytes = Vec::new();
         image::DynamicImage::ImageRgb8(image::RgbImage::new(width, height))
-            .write_to(&mut std::io::Cursor::new(&mut bytes), image::ImageFormat::Png)
+            .write_to(
+                &mut std::io::Cursor::new(&mut bytes),
+                image::ImageFormat::Png,
+            )
             .unwrap();
         bytes
     }
@@ -1171,7 +1202,10 @@ mod tests {
         );
         assert_eq!(best_srcset("a.jpg 1x, b.jpg 2x").as_deref(), Some("b.jpg"));
         // Nelle liste miste i descriptor "w" battono gli "x".
-        assert_eq!(best_srcset("a.jpg 2x, b.jpg 800w").as_deref(), Some("b.jpg"));
+        assert_eq!(
+            best_srcset("a.jpg 2x, b.jpg 800w").as_deref(),
+            Some("b.jpg")
+        );
         assert_eq!(best_srcset("solo.jpg").as_deref(), Some("solo.jpg"));
         assert_eq!(best_srcset(" , ,"), None);
     }
@@ -1212,7 +1246,10 @@ mod tests {
             "https://esempio.it/gallery/pagina/default.jpg",
             "https://esempio.it/downloads/bigmap.png",
         ] {
-            assert!(primaries.contains(&expected.to_string()), "manca {expected}");
+            assert!(
+                primaries.contains(&expected.to_string()),
+                "manca {expected}"
+            );
         }
         assert_eq!(primaries.len(), 13, "primitive: {primaries:?}");
         // data: e blob: non diventano mai candidati.
@@ -1251,7 +1288,9 @@ mod tests {
         );
         // WordPress "-scaled" e combinazioni.
         assert_eq!(
-            upgraded(&url("https://sito.it/foto-scaled.jpg")).as_ref().map(Url::path),
+            upgraded(&url("https://sito.it/foto-scaled.jpg"))
+                .as_ref()
+                .map(Url::path),
             Some("/foto.jpg")
         );
         assert_eq!(
@@ -1262,14 +1301,21 @@ mod tests {
         );
         // Shopify "_1024x1024_crop_center".
         assert_eq!(
-            upgraded(&url("https://cdn.shopify.net/s/files/1/0001/prod_1024x1024_crop_center.jpg"))
-                .as_ref()
-                .map(Url::path),
+            upgraded(&url(
+                "https://cdn.shopify.net/s/files/1/0001/prod_1024x1024_crop_center.jpg"
+            ))
+            .as_ref()
+            .map(Url::path),
             Some("/s/files/1/0001/prod.jpg")
         );
         // Parametri CDN di trasformazione.
-        let clean = upgraded(&url("https://pics.example.net/800/600.jpg?w=300&h=200&fit=crop&quality=80"));
-        assert_eq!(clean.as_ref().map(Url::as_str), Some("https://pics.example.net/800/600.jpg"));
+        let clean = upgraded(&url(
+            "https://pics.example.net/800/600.jpg?w=300&h=200&fit=crop&quality=80",
+        ));
+        assert_eq!(
+            clean.as_ref().map(Url::as_str),
+            Some("https://pics.example.net/800/600.jpg")
+        );
         // I parametri innocui restano.
         let versioned = upgraded(&url("https://sito.it/img.jpg?v=2&w=300"));
         assert_eq!(
@@ -1285,8 +1331,14 @@ mod tests {
         let (format, dimensions) = image_header(&png_bytes(320, 200)).unwrap();
         assert_eq!(format, "Png");
         assert_eq!(dimensions, [320, 200]);
-        assert_eq!(image_header(b"<svg xmlns='http://www.w3.org/2000/svg'></svg>"), None);
-        assert_eq!(image_header(b"\x00\x00\x00\x18ftypavif\x00\x00\x00\x00avif"), None);
+        assert_eq!(
+            image_header(b"<svg xmlns='http://www.w3.org/2000/svg'></svg>"),
+            None
+        );
+        assert_eq!(
+            image_header(b"\x00\x00\x00\x18ftypavif\x00\x00\x00\x00avif"),
+            None
+        );
     }
 
     #[test]
@@ -1343,7 +1395,11 @@ mod tests {
 
     impl TestServer {
         fn route(&self, path: &str) -> bool {
-            self.log.lock().unwrap().iter().any(|(served, _, _)| served == path)
+            self.log
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|(served, _, _)| served == path)
         }
     }
 
@@ -1404,19 +1460,26 @@ mod tests {
                 }
                 log.lock().unwrap().push((path.clone(), user_agent, ranged));
                 if path == "/shutdown" {
-                    let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                    let _ = stream.write_all(
+                        b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                    );
                     return;
                 }
-                let (status, content_type, body) = routes
-                    .get(&path)
-                    .cloned()
-                    .unwrap_or((404, "text/plain".into(), b"non trovato".to_vec()));
+                let (status, content_type, body) = routes.get(&path).cloned().unwrap_or((
+                    404,
+                    "text/plain".into(),
+                    b"non trovato".to_vec(),
+                ));
                 // Il server onora Range sui file immagine.
                 let (status, extra) =
                     if ranged && status == 200 && content_type.starts_with("image/") {
                         (
                             206u16,
-                            format!("Content-Range: bytes 0-{}/{}\r\n", body.len() - 1, body.len()),
+                            format!(
+                                "Content-Range: bytes 0-{}/{}\r\n",
+                                body.len() - 1,
+                                body.len()
+                            ),
                         )
                     } else {
                         (status, String::new())
@@ -1471,7 +1534,12 @@ mod tests {
         let png_c = png_bytes(200, 100);
         let gallery = r#"<img src="/foto-300x200.jpg"><img src="/other/foto-300x200.jpg"><a href="/big.png">g</a><img src="/ripetuta.png">"#;
         let server = spawn_server(vec![
-            ("/gallery", 200, "text/html; charset=utf-8", gallery.as_bytes().to_vec()),
+            (
+                "/gallery",
+                200,
+                "text/html; charset=utf-8",
+                gallery.as_bytes().to_vec(),
+            ),
             // L'originale ricostruito non esiste: si ricade sulla miniatura.
             ("/foto.jpg", 404, "text/plain", b"no".to_vec()),
             ("/foto-300x200.jpg", 200, "image/png", png_a.clone()),
@@ -1484,7 +1552,11 @@ mod tests {
 
         let (images, errors) = run_scan(
             &server.base.join("/gallery").unwrap(),
-            &ScanOptions { crawl_site: false, max_pages: 1, min_kb: 0 },
+            &ScanOptions {
+                crawl_site: false,
+                max_pages: 1,
+                min_kb: 0,
+            },
         );
         assert!(errors.is_empty(), "errori: {errors:?}");
 
@@ -1531,13 +1603,22 @@ mod tests {
     fn min_kb_filter_drops_tiny_images() {
         let png = png_bytes(64, 64);
         let server = spawn_server(vec![
-            ("/gallery", 200, "text/html", b"<img src=\"icona.png\">".to_vec()),
+            (
+                "/gallery",
+                200,
+                "text/html",
+                b"<img src=\"icona.png\">".to_vec(),
+            ),
             ("/icona.png", 200, "image/png", png),
         ]);
         let start = server.base.join("/gallery").unwrap();
         let (images, _) = run_scan(
             &start,
-            &ScanOptions { crawl_site: false, max_pages: 1, min_kb: 50 },
+            &ScanOptions {
+                crawl_site: false,
+                max_pages: 1,
+                min_kb: 50,
+            },
         );
         assert!(images.is_empty());
         shutdown(&server);
@@ -1560,7 +1641,11 @@ mod tests {
         let start = server.base.join("/gallery").unwrap();
         let (images, _) = run_scan(
             &start,
-            &ScanOptions { crawl_site: false, max_pages: 1, min_kb: 0 },
+            &ScanOptions {
+                crawl_site: false,
+                max_pages: 1,
+                min_kb: 0,
+            },
         );
         assert_eq!(images.len(), 2);
 
@@ -1589,7 +1674,10 @@ mod tests {
             .collect();
         // Stesso nome nell'URL: la seconda diventa "foto (2).jpg".
         assert!(names.contains(&"foto.jpg".to_string()), "nomi: {names:?}");
-        assert!(names.contains(&"foto (2).jpg".to_string()), "nomi: {names:?}");
+        assert!(
+            names.contains(&"foto (2).jpg".to_string()),
+            "nomi: {names:?}"
+        );
         // Il contenuto è integro: uno dei due PNG originali per file.
         for path in &saved {
             let content = fs::read(path).unwrap();
@@ -1620,10 +1708,17 @@ mod tests {
         let start = server.base.join("/a.html").unwrap();
         let (images, _) = run_scan(
             &start,
-            &ScanOptions { crawl_site: true, max_pages: 10, min_kb: 0 },
+            &ScanOptions {
+                crawl_site: true,
+                max_pages: 10,
+                min_kb: 0,
+            },
         );
         // Le immagini arrivano da entrambe le pagine visitate.
-        let paths: Vec<String> = images.iter().map(|image| image.url.path().to_string()).collect();
+        let paths: Vec<String> = images
+            .iter()
+            .map(|image| image.url.path().to_string())
+            .collect();
         assert!(paths.contains(&"/a.png".to_string()), "percorsi: {paths:?}");
         assert!(paths.contains(&"/b.png".to_string()), "percorsi: {paths:?}");
         // La pagina vietata da robots.txt non è mai stata richiesta.

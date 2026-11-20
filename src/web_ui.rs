@@ -128,7 +128,9 @@ impl WebImport {
                 Some(Ok(DownloadEvent::Finished { cancelled })) => {
                     self.download_rx = None;
                     if cancelled {
-                        self.push_error("Download interrotto: importo solo i file completati.".into());
+                        self.push_error(
+                            "Download interrotto: importo solo i file completati.".into(),
+                        );
                     }
                     let paths = std::mem::take(&mut self.downloaded);
                     self.download_total = 0;
@@ -307,7 +309,10 @@ impl WebImport {
             ui.add(field);
             let scanning = self.scan_rx.is_some();
             if ui
-                .add_enabled(!scanning, egui::Button::new("Analizza").min_size(Vec2::new(110.0, 34.0)))
+                .add_enabled(
+                    !scanning,
+                    egui::Button::new("Analizza").min_size(Vec2::new(110.0, 34.0)),
+                )
                 .clicked()
             {
                 self.start_scan(settings);
@@ -344,9 +349,13 @@ impl WebImport {
             ui.label("Salva in");
             let dir = download_dir(settings);
             ui.monospace(
-                egui::RichText::new(dir.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_else(|| dir.display().to_string()))
-                    .small()
-                    .color(theme::BLUE),
+                egui::RichText::new(
+                    dir.file_name()
+                        .map(|name| name.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| dir.display().to_string()),
+                )
+                .small()
+                .color(theme::BLUE),
             )
             .on_hover_text(dir.display().to_string());
             if self.folder_rx.is_some() {
@@ -366,7 +375,11 @@ impl WebImport {
                 }
             });
         } else if !self.status.is_empty() {
-            ui.label(egui::RichText::new(&self.status).small().color(theme::MUTED));
+            ui.label(
+                egui::RichText::new(&self.status)
+                    .small()
+                    .color(theme::MUTED),
+            );
         }
         if let Some(last) = self.errors.last() {
             ui.colored_label(
@@ -389,11 +402,8 @@ impl WebImport {
                         item.selected = false;
                     }
                 }
-                let selected: Vec<&GridItem> = self
-                    .items
-                    .iter()
-                    .filter(|item| item.selected)
-                    .collect();
+                let selected: Vec<&GridItem> =
+                    self.items.iter().filter(|item| item.selected).collect();
                 ui.label(
                     egui::RichText::new(format!(
                         "{} di {} selezionate · {}",
@@ -452,10 +462,10 @@ impl WebImport {
             .max_height(360.0)
             .drag_to_scroll(false)
             .show(ui, |ui| {
-                let columns = (((ui.available_width() + theme::GAP)
-                    / (CELL.x + theme::GAP))
-                    .floor() as usize)
-                    .max(1);
+                let columns =
+                    (((ui.available_width() + theme::GAP) / (CELL.x + theme::GAP)).floor()
+                        as usize)
+                        .max(1);
                 for (row, chunk) in self.items.chunks_mut(columns).enumerate() {
                     ui.horizontal(|ui| {
                         for (column, item) in chunk.iter_mut().enumerate() {
@@ -478,50 +488,51 @@ impl WebImport {
                             ui.allocate_new_ui(
                                 egui::UiBuilder::new().max_rect(rect.shrink(4.0)),
                                 |ui| {
-                                ui.set_min_size(rect.size() - Vec2::splat(8.0));
-                                ui.vertical_centered(|ui| {
-                                    let [width, height] = item.image.dimensions;
-                                    if let Some(texture) = &item.texture {
-                                        let (preview_rect, _) =
-                                            ui.allocate_exact_size(PREVIEW, Sense::hover());
-                                        ui.put(
-                                            preview_rect,
-                                            egui::Image::new(texture).max_size(PREVIEW),
-                                        )
-                                        .on_hover_ui(|ui| {
-                                            ui.set_min_width(360.0);
-                                            ui.add(
-                                                egui::Image::new(texture)
-                                                    .max_size(Vec2::new(480.0, 360.0)),
+                                    ui.set_min_size(rect.size() - Vec2::splat(8.0));
+                                    ui.vertical_centered(|ui| {
+                                        let [width, height] = item.image.dimensions;
+                                        if let Some(texture) = &item.texture {
+                                            let (preview_rect, _) =
+                                                ui.allocate_exact_size(PREVIEW, Sense::hover());
+                                            ui.put(
+                                                preview_rect,
+                                                egui::Image::new(texture).max_size(PREVIEW),
+                                            )
+                                            .on_hover_ui(|ui| {
+                                                ui.set_min_width(360.0);
+                                                ui.add(
+                                                    egui::Image::new(texture)
+                                                        .max_size(Vec2::new(480.0, 360.0)),
+                                                );
+                                                ui.label(item.image.url.as_str());
+                                            });
+                                        } else if item.pending.is_some() {
+                                            let (busy, _) =
+                                                ui.allocate_exact_size(PREVIEW, Sense::hover());
+                                            ui.put(busy, egui::Spinner::new());
+                                        } else {
+                                            let (empty, _) =
+                                                ui.allocate_exact_size(PREVIEW, Sense::hover());
+                                            ui.painter().rect_filled(empty, 8.0, theme::PANEL);
+                                            ui.painter().text(
+                                                empty.center(),
+                                                egui::Align2::CENTER_CENTER,
+                                                format!("{width}×{height}"),
+                                                egui::FontId::proportional(15.0),
+                                                theme::MUTED,
                                             );
-                                            ui.label(item.image.url.as_str());
+                                        }
+                                        ui.horizontal(|ui| {
+                                            ui.checkbox(&mut item.selected, "");
+                                            ui.label(
+                                                egui::RichText::new(item.caption())
+                                                    .small()
+                                                    .color(theme::MUTED),
+                                            );
                                         });
-                                    } else if item.pending.is_some() {
-                                        let (busy, _) =
-                                            ui.allocate_exact_size(PREVIEW, Sense::hover());
-                                        ui.put(busy, egui::Spinner::new());
-                                    } else {
-                                        let (empty, _) =
-                                            ui.allocate_exact_size(PREVIEW, Sense::hover());
-                                        ui.painter().rect_filled(empty, 8.0, theme::PANEL);
-                                        ui.painter().text(
-                                            empty.center(),
-                                            egui::Align2::CENTER_CENTER,
-                                            format!("{width}×{height}"),
-                                            egui::FontId::proportional(15.0),
-                                            theme::MUTED,
-                                        );
-                                    }
-                                    ui.horizontal(|ui| {
-                                        ui.checkbox(&mut item.selected, "");
-                                        ui.label(
-                                            egui::RichText::new(item.caption())
-                                                .small()
-                                                .color(theme::MUTED),
-                                        );
                                     });
-                                });
-                            });
+                                },
+                            );
                             if response.clicked() {
                                 toggled = Some(index);
                             }
@@ -582,12 +593,19 @@ impl WebImport {
                 .desired_width(ui.available_width()),
         );
         if let Some(last) = self.errors.last() {
-            ui.colored_label(theme::DANGER, egui::RichText::new(format!("Ultimo problema: {last}")).small());
+            ui.colored_label(
+                theme::DANGER,
+                egui::RichText::new(format!("Ultimo problema: {last}")).small(),
+            );
         }
         ui.label(
             egui::RichText::new(format!(
                 "I file vengono salvati in {} e poi importati nella lista.",
-                self.downloaded.last().and_then(|path| path.parent()).map(|dir| dir.display().to_string()).unwrap_or_default()
+                self.downloaded
+                    .last()
+                    .and_then(|path| path.parent())
+                    .map(|dir| dir.display().to_string())
+                    .unwrap_or_default()
             ))
             .small()
             .color(theme::MUTED),

@@ -15,6 +15,7 @@ pub const GAP: f32 = 8.0;
 pub const PADDING: i8 = 16;
 
 pub fn apply(ctx: &egui::Context) {
+    install_fonts(ctx);
     let mut style = (*ctx.style()).clone();
     style.visuals = egui::Visuals::dark();
     style.spacing.item_spacing = Vec2::splat(GAP);
@@ -58,6 +59,29 @@ pub fn apply(ctx: &egui::Context) {
     ctx.set_style(style);
 }
 
+/// Il font proporzionale predefinito di egui (Ubuntu Light) non contiene le
+/// frecce (U+2190–U+2199), che apparivano come quadratini. Noto Sans Symbols
+/// (OFL, vedi packaging/assets/fonts/) viene aggiunto in coda come riserva:
+/// interviene solo per i glifi mancanti senza cambiare il resto del testo.
+fn install_fonts(ctx: &egui::Context) {
+    let mut fonts = egui::FontDefinitions::default();
+    fonts.font_data.insert(
+        "noto-sans-symbols".into(),
+        egui::FontData::from_static(include_bytes!(
+            "../packaging/assets/fonts/noto-sans-symbols.ttf"
+        ))
+        .into(),
+    );
+    for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+        fonts
+            .families
+            .entry(family)
+            .or_default()
+            .push("noto-sans-symbols".into());
+    }
+    ctx.set_fonts(fonts);
+}
+
 pub fn panel_frame() -> egui::Frame {
     egui::Frame::new()
         .fill(PANEL)
@@ -92,4 +116,26 @@ pub fn primary(text: &str) -> egui::Button<'_> {
 /// Logo vettoriale, senza font di icone o asset esterni.
 pub fn logo(ui: &mut egui::Ui, texture: &egui::TextureHandle, size: f32) {
     ui.add(egui::Image::new(texture).fit_to_exact_size(Vec2::splat(size)));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Senza il font di riserva queste frecce diventavano quadratini (tofu).
+    #[test]
+    fn arrows_have_a_real_glyph_after_the_fallback_font() {
+        let ctx = egui::Context::default();
+        apply(&ctx);
+        // I font sono disponibili solo dopo la prima Context::run().
+        ctx.run(egui::RawInput::default(), |ctx| {
+            for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+                let font_id = egui::FontId::new(14.0, family.clone());
+                assert!(
+                    ctx.fonts(|fonts| fonts.has_glyphs(&font_id, "←↑→↓↔↕↖↗↘↙")),
+                    "frecce senza glifi in {family:?}"
+                );
+            }
+        });
+    }
 }

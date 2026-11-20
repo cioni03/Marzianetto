@@ -32,6 +32,18 @@ pub fn description() -> &'static str {
     }
 }
 
+/// Apre una cartella nel file manager di sistema (Finder, Esplora file o quello
+/// predefinito su Linux). Best-effort: un eventuale errore non tocca l'interfaccia.
+pub fn reveal(path: &Path) {
+    #[cfg(target_os = "macos")]
+    let mut command = std::process::Command::new("/usr/bin/open");
+    #[cfg(target_os = "windows")]
+    let mut command = std::process::Command::new("explorer");
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let mut command = std::process::Command::new("xdg-open");
+    let _ = command.arg(path).spawn();
+}
+
 pub fn install() -> Result<String> {
     if std::env::var_os("FLATPAK_ID").is_some() {
         bail!("{}", description());

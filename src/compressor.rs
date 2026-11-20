@@ -67,7 +67,10 @@ pub fn output_path(source: &Source, settings: &Settings) -> Result<PathBuf> {
         .context("Cartella di origine mancante")?;
     let stem = source.path.file_stem().context("Nome file mancante")?;
     let mut name = stem.to_os_string();
-    if settings.destination != Destination::Replace {
+    // Nella cartella separata il suffisso nomina solo la cartella: i file
+    // dentro conservano il nome originale. Accanto agli originali, invece,
+    // distingue le copie dai file di partenza.
+    if settings.destination == Destination::SameFolder {
         name.push(&settings.suffix);
     }
     name.push(format!(".{}", format.extension()));
@@ -797,10 +800,17 @@ mod tests {
         let mut source = fixture(dir.path());
         source.root = PathBuf::from("/photos");
         source.path = PathBuf::from("/photos/holiday/a.png");
-        let settings = Settings::default();
+        // Cartella separata: il suffisso nomina la cartella, non i file.
+        assert_eq!(
+            output_path(&source, &Settings::default()).unwrap(),
+            PathBuf::from("/photos_compressed/holiday/a.png")
+        );
+        // Accanto agli originali: il suffisso distingue le copie.
+        let mut settings = Settings::default();
+        settings.destination = Destination::SameFolder;
         assert_eq!(
             output_path(&source, &settings).unwrap(),
-            PathBuf::from("/photos_compressed/holiday/a_compressed.png")
+            PathBuf::from("/photos/holiday/a_compressed.png")
         );
     }
 

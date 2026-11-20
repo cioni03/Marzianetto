@@ -272,9 +272,13 @@ impl Prepared {
 #[derive(Default)]
 pub struct Updater {
     check: Option<Receiver<Result<Option<Update>>>>,
+    /// True quando il controllo in corso è stato richiesto dall'utente:
+    /// in quel caso l'esito viene sempre comunicato, anche senza novità.
+    manual: bool,
     offered: Option<Update>,
     download: Option<Receiver<Result<Prepared>>>,
     error: Option<String>,
+    info: Option<String>,
 }
 
 fn worker<T: Send + 'static>(
@@ -298,14 +302,50 @@ impl Updater {
         }
     }
 
+    /// Controllo esplicito richiesto dalle impostazioni. Fuori dal bundle .app
+    /// installato non c'è nulla da aggiornare: lo si dice invece di fallire in silenzio.
+    pub fn check_now(&mut self, ctx: &egui::Context, skipped: Option<String>) {
+        if self.check.is_some() || self.download.is_some() {
+            return;
+        }
+        self.manual = true;
+        self.check = installed_bundle().map(|_| worker(ctx, move || check(skipped.as_deref())));
+        if self.check.is_none() {
+            self.manual = false;
+            self.info = Some(
+                "Gli aggiornamenti automatici valgono solo per l'app installata (.app).".into(),
+            );
+        }
+    }
+
+    pub fn checking(&self) -> bool {
+        self.check.is_some()
+    }
+
     pub fn show(&mut self, ctx: &egui::Context, settings: &mut Settings) -> bool {
         if let Some(result) = self.check.as_ref().map(Receiver::try_recv) {
             match result {
                 Ok(result) => {
                     self.check = None;
-                    self.offered = result.ok().flatten();
+                    match result {
+                        Ok(update) => {
+                            self.offered = update;
+                            if self.manual && self.offered.is_none() {
+                                self.info =
+                                    Some("Marzianetto è all'ultima versione disponibile.".into());
+                            }
+                        }
+                        // Il controllo automatico fallito resta silenzioso e si
+                        // ripete al prossimo avvio; quello manuale va spiegato.
+                        Err(err) if self.manual => self.error = Some(format!("{err:#}")),
+                        Err(_) => {}
+                    }
+                    self.manual = false;
                 }
-                Err(mpsc::TryRecvError::Disconnected) => self.check = None,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.check = None;
+                    self.manual = false;
+                }
                 Err(mpsc::TryRecvError::Empty) => {}
             }
         }
@@ -327,9 +367,19 @@ impl Updater {
         }
 
         let mut changed = false;
-        if self.offered.is_some() || self.download.is_some() || self.error.is_some() {
+        if self.offered.is_some()
+            || self.download.is_some()
+            || self.error.is_some()
+            || self.info.is_some()
+        {
             egui::Modal::new(egui::Id::new("app_update")).show(ctx, |ui| {
-                if let Some(error) = &self.error {
+                if let Some(info) = &self.info {
+                    ui.heading("Nessun aggiornamento disponibile");
+                    ui.label(info);
+                    if ui.button("Chiudi").clicked() {
+                        self.info = None;
+                    }
+                } else if let Some(error) = &self.error {
                     ui.heading("Aggiornamento non riuscito");
                     ui.label(error);
                     ui.hyperlink_to("Apri GitHub Releases", RELEASES);

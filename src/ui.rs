@@ -5,6 +5,7 @@ use crate::{
     model::{format_bytes, format_savings, savings_percent, CompressionResult, Source},
     settings::{Destination, OutputFormat, ResizeEdge, Settings},
     theme,
+    web_ui::WebImport,
 };
 use eframe::egui::{self, Color32, RichText, TextureHandle, Vec2};
 use egui_extras::{Column, TableBuilder};
@@ -63,6 +64,7 @@ pub struct CompressorApp {
     messages: Vec<String>,
     show_messages: bool,
     show_integration: bool,
+    web: WebImport,
     integration_installed: bool,
     integration_rx: Option<Receiver<(bool, Result<String, String>)>>,
     integration_message: Option<String>,
@@ -114,6 +116,7 @@ impl CompressorApp {
             messages: Vec::new(),
             show_messages: false,
             show_integration: false,
+            web: WebImport::default(),
             integration_installed: integration::installed(),
             integration_rx: None,
             integration_message: None,
@@ -131,6 +134,7 @@ impl CompressorApp {
             || self.work_rx.is_some()
             || self.dialog_rx.is_some()
             || self.integration_rx.is_some()
+            || self.web.active()
     }
 
     fn message(&mut self, text: String) {
@@ -206,6 +210,12 @@ impl CompressorApp {
     }
 
     fn poll(&mut self, ctx: &egui::Context) {
+        // Il download dal web finito consegna i file alla pipeline esistente.
+        if let Some(paths) = self.web.poll(ctx, &mut self.settings) {
+            if !paths.is_empty() {
+                self.receive_paths(paths);
+            }
+        }
         if let Some(rx) = &self.integration_rx {
             match rx.try_recv() {
                 Ok((installed, result)) => {
@@ -706,6 +716,7 @@ impl CompressorApp {
     }
 
     fn popups(&mut self, ctx: &egui::Context) {
+        self.web.show(ctx, &mut self.settings);
         if self.show_integration {
             let mut open = self.show_integration;
             egui::Window::new("Integrazione con il sistema").open(&mut open)
@@ -880,6 +891,15 @@ impl eframe::App for CompressorApp {
                     {
                         self.choose(true);
                     }
+                    if ui
+                        .add_enabled(
+                            !blocked,
+                            egui::Button::new("+ Da web").min_size(Vec2::new(104.0, 40.0)),
+                        )
+                        .clicked()
+                    {
+                        self.web.open = true;
+                    }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui
                             .add_enabled(
@@ -982,10 +1002,6 @@ impl eframe::App for CompressorApp {
                     egui::ScrollArea::vertical().show(ui, |ui| self.settings_panel(ui));
                 });
             });
-        if before != self.settings {
-            self.save_due = Some(Instant::now() + Duration::from_millis(400));
-            ctx.request_repaint_after(Duration::from_millis(400));
-        }
         egui::CentralPanel::default().frame(egui::Frame::new().fill(theme::BACKGROUND).inner_margin(theme::PADDING)).show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.heading("Le tue immagini");
@@ -1011,6 +1027,8 @@ impl eframe::App for CompressorApp {
                         ui.label(RichText::new("Trascina qui immagini o intere cartelle").color(theme::MUTED));
                         ui.add_space(theme::GAP);
                         if ui.add_enabled(!blocked, theme::primary("Scegli immagini")).clicked() { self.choose(false); }
+                        ui.add_space(theme::GAP);
+                        if ui.add_enabled(!blocked, egui::Button::new("Recupera da pagina web").min_size(Vec2::new(190.0, 36.0))).clicked() { self.web.open = true; }
                         ui.add_space(16.0);
                         ui.label(RichText::new("JPEG · PNG · WebP · BMP · GIF · TIFF").small().color(theme::BLUE));
                         ui.label(RichText::new("Converti anche in AVIF. Gli originali restano al sicuro nelle modalità copia.").small().color(theme::MUTED));
@@ -1021,6 +1039,12 @@ impl eframe::App for CompressorApp {
             }
         });
         self.popups(ctx);
+        // Il confronto dopo i popup copre anche le modifiche alle preferenze
+        // fatte dalla finestra di importazione dal web.
+        if before != self.settings {
+            self.save_due = Some(Instant::now() + Duration::from_millis(400));
+            ctx.request_repaint_after(Duration::from_millis(400));
+        }
         #[cfg(target_os = "macos")]
         if !blocked
             && !self.show_integration
@@ -1110,6 +1134,7 @@ mod tests {
                         if [
                             "+ Immagini",
                             "+ Cartella",
+                            "+ Da web",
                             "Menu di sistema",
                             "Comprimi immagini",
                             "Comprimi e converti",
@@ -1191,5 +1216,53 @@ mod tests {
         assert_eq!(app.pending_folders.len(), 1);
         assert!(app.work_rx.is_none());
         assert!(app.import_rx.is_none());
+    }
+
+    #[test]
+    fn web_dialog_renders_found_images() {
+        let ctx = egui::Context::default();
+        let cc = eframe::CreationContext::_new_kittest(ctx.clone());
+        let mut app = CompressorApp::new(&cc, Vec::new());
+        app.web.open = true;
+        app.web.push_item_for_tests(crate::web::WebImage {
+            url: url::Url::parse("https://esempio.it/foto-1920x1080.jpg").unwrap(),
+            alternate: None,
+            page: url::Url::parse("https://esempio.it/").unwrap(),
+            bytes: 230_000,
+            dimensions: [1920, 1080],
+            format: "Jpeg".into(),
+            preview: None,
+        });
+        let mut frame = eframe::Frame::_new_kittest();
+        let mut labels: Vec<String> = Vec::new();
+        for _ in 0..3 {
+            let output = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        Vec2::new(1280.0, 860.0),
+                    )),
+                    ..Default::default()
+                },
+                |ctx| app.update(ctx, &mut frame),
+            );
+            labels = output
+                .shapes
+                .into_iter()
+                .filter_map(|shape| {
+                    if let egui::Shape::Text(text) = shape.shape {
+                        Some(text.galley.job.text.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+        }
+        for expected in ["Recupera da pagina web", "Seleziona tutte", "1920×1080", "Importa 0 immagini"] {
+            assert!(
+                labels.iter().any(|label| label.contains(expected)),
+                "manca «{expected}» in {labels:?}"
+            );
+        }
     }
 }

@@ -8,6 +8,8 @@ mod model;
 mod settings;
 mod theme;
 mod ui;
+mod web;
+mod web_ui;
 #[cfg(target_os = "macos")]
 mod updater;
 

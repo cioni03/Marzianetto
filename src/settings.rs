@@ -100,6 +100,11 @@ pub struct Settings {
     pub destination: Destination,
     pub suffix: String,
     pub strip_metadata: bool,
+    /// Opzioni del recupero da pagina web, con valori predefiniti
+    /// retrocompatibili per le preferenze delle versioni precedenti.
+    pub web_min_kb: u64,
+    pub web_max_pages: u32,
+    pub web_download_dir: Option<PathBuf>,
     #[cfg(target_os = "macos")]
     pub skipped_update: Option<String>,
 }
@@ -117,6 +122,9 @@ impl Default for Settings {
             destination: Destination::SiblingFolder,
             suffix: "_compressed".into(),
             strip_metadata: true,
+            web_min_kb: 50,
+            web_max_pages: 10,
+            web_download_dir: None,
             #[cfg(target_os = "macos")]
             skipped_update: None,
         }
@@ -248,6 +256,9 @@ mod tests {
         assert!(settings.strip_metadata);
         assert!(settings.convert_format);
         assert!(settings.compression);
+        assert_eq!(settings.web_min_kb, 50);
+        assert_eq!(settings.web_max_pages, 10);
+        assert!(settings.web_download_dir.is_none());
     }
 
     #[cfg(target_os = "macos")]
